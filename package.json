@@ -1,0 +1,114 @@
+{
+  "name": "notaris-pro",
+  "version": "1.0.0",
+  "description": "NOTARIS PRO — Integrated Notary & PPAT Management System",
+  "main": "./out/main/index.js",
+  "author": "Kantor Notaris & PPAT",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "db:generate": "prisma generate",
+    "db:migration:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script",
+    "templates": "node scripts/make-templates.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "node scripts/e2e.mjs",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
+    "dist:mac": "npm run build && electron-builder --mac dmg",
+    "postinstall": "prisma generate"
+  },
+  "build": {
+    "appId": "id.notarispro.desktop",
+    "productName": "NOTARIS PRO",
+    "copyright": "Copyright © 2026 Kantor Notaris & PPAT",
+    "asar": false,
+    "afterPack": "scripts/after-pack.mjs",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "migrations",
+        "to": "migrations",
+        "filter": ["*.sql"]
+      },
+      {
+        "from": "templates",
+        "to": "templates",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "NOTARIS-PRO-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NOTARIS PRO",
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office",
+      "icon": "build/icon.png",
+      "artifactName": "NOTARIS-PRO-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.business",
+      "icon": "build/icon.png",
+      "artifactName": "NOTARIS-PRO-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "adm-zip": "^0.6.1",
+    "date-fns": "^4.4.0",
+    "docxtemplater": "^3.71.1",
+    "hash-wasm": "^4.12.0",
+    "pizzip": "^3.2.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^22.19.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "autoprefixer": "^10.4.21",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.1",
+    "electron-vite": "6.0.0",
+    "lucide-react": "^1.66.0",
+    "playwright-core": "1.64.1",
+    "postcss": "^8.5.6",
+    "prisma": "6.19.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
+    "recharts": "^3.10.1",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "3.2.7"
+  }
+}

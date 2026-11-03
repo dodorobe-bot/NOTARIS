@@ -1,0 +1,913 @@
+// NOTARIS PRO — Skema database (SQLite + Prisma ORM)
+// Konvensi: seluruh nilai uang disimpan sebagai Int (Rupiah utuh), bukan Float,
+// untuk menghindari galat pembulatan. Tanggal disimpan sebagai DateTime (UTC).
+
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  users       User[]
+}
+
+model Permission {
+  id     String @id @default(uuid())
+  code   String @unique
+  name   String
+  group  String
+  roles  RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model User {
+  id                 String    @id @default(uuid())
+  username           String    @unique
+  email              String?   @unique
+  fullName           String
+  passwordHash       String
+  roleId             String
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  role                 Role                @relation(fields: [roleId], references: [id])
+  clientsCreated       Client[]            @relation("ClientCreatedBy")
+  transactionsCreated  Transaction[]       @relation("TransactionCreatedBy")
+  transactionsAssigned Transaction[]       @relation("TransactionAssignedTo")
+  deedsDrafted         Deed[]              @relation("DeedDraftMaker")
+  deedsNotary          Deed[]              @relation("DeedNotary")
+  documentsUploaded    Document[]          @relation("DocumentUploadedBy")
+  documentVersions     DocumentVersion[]
+  invoicesCreated      Invoice[]           @relation("InvoiceCreatedBy")
+  paymentsReceived     Payment[]           @relation("PaymentReceivedBy")
+  expensesCreated      Expense[]           @relation("ExpenseCreatedBy")
+  appointmentsAssigned Appointment[]       @relation("AppointmentAssignedTo")
+  appointmentsCreated  Appointment[]       @relation("AppointmentCreatedBy")
+  tasksAssigned        WorkTask[]          @relation("TaskAssignedTo")
+  tasksCreated         WorkTask[]          @relation("TaskCreatedBy")
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  backups              BackupLog[]
+  workflowHistory      WorkflowHistory[]
+  protocols            ProtocolRegister[]  @relation("ProtocolCreatedBy")
+  settingsUpdated      Setting[]           @relation("SettingUpdatedBy")
+  legalDeadlines       LegalDeadline[]     @relation("DeadlineCreatedBy")
+  governmentSubmissions GovernmentSubmission[] @relation("GovernmentSubmissionCreatedBy")
+  governmentFiles      GovernmentSubmissionFile[] @relation("GovernmentFileUploadedBy")
+  governmentStatusChanges GovernmentStatusHistory[] @relation("GovernmentStatusChangedBy")
+  governmentReferences GovernmentReference[] @relation("GovernmentReferenceCreatedBy")
+  governmentSyncLogs   GovernmentSyncLog[] @relation("GovernmentSyncLogCreatedBy")
+  governmentConfigs    GovernmentApiConfig[] @relation("GovernmentConfigUpdatedBy")
+  governmentCredentials GovernmentApiCredential[] @relation("GovernmentCredentialCreatedBy")
+
+  @@index([roleId])
+  @@index([isActive])
+}
+
+model Client {
+  id           String    @id @default(uuid())
+  code         String    @unique
+  type         String    // PERORANGAN | BADAN_HUKUM
+  fullName     String
+  nik          String?
+  npwp         String?
+  birthPlace   String?
+  birthDate    DateTime?
+  gender       String?   // LAKI_LAKI | PEREMPUAN
+  occupation   String?
+  address      String?
+  kelurahan    String?
+  kecamatan    String?
+  kabupaten    String?
+  provinsi     String?
+  postalCode   String?
+  phone        String?
+  email        String?
+  status       String    @default("AKTIF") // AKTIF | NONAKTIF | BLACKLIST
+  internalNotes String?
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  createdBy    User?              @relation("ClientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  identities   ClientIdentity[]
+  company      ClientCompany?
+  transactions Transaction[]
+  documents    Document[]
+  invoices     Invoice[]
+  appointments Appointment[]
+  deedParties  DeedParty[]
+  deeds        Deed[]
+  transactionParties TransactionParty[]
+  governmentSubmissions GovernmentSubmission[]
+
+  @@index([type])
+  @@index([status])
+  @@index([fullName])
+  @@index([deletedAt])
+  @@index([deletedAt, createdAt])
+  @@index([nik])
+  @@index([npwp])
+}
+
+model ClientIdentity {
+  id         String    @id @default(uuid())
+  clientId   String
+  docType    String    // KTP | NPWP | PASPOR | KITAS | SIM | KK | LAINNYA
+  number     String?
+  issuedAt   DateTime?
+  expiresAt  DateTime?
+  documentId String?
+  notes      String?
+  createdAt  DateTime  @default(now())
+
+  client   Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  document Document? @relation("IdentityDocument", fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+}
+
+model ClientCompany {
+  id                      String    @id @default(uuid())
+  clientId                String    @unique
+  companyName             String
+  legalType               String    // PT | CV | FIRMA | KOPERASI | YAYASAN | PERKUMPULAN | LAINNYA
+  establishmentDeedNumber String?
+  establishmentDeedDate   DateTime?
+  establishmentNotary     String?
+  domicile                String?
+  companyNpwp             String?
+  nib                     String?
+  pengurusJson            String?   // JSON: [{nama,jabatan,nik}]
+  shareholdersJson        String?   // JSON: [{nama,persentase}]
+  legalityNotes           String?
+  legalityDocumentId      String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  client           Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  legalityDocument Document? @relation("CompanyLegalityDocument", fields: [legalityDocumentId], references: [id], onDelete: SetNull)
+}
+
+model Transaction {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  clientId        String
+  type            String    // NOTARIS | PPAT
+  serviceType     String?   // untuk PPAT: AJB, APHT, SKMHT, HIBAH, APHB, TUKAR_MENUKAR, PEMASUKAN_PERUSAHAAN, LAINNYA
+  title           String
+  description     String?
+  status          String    @default("REGISTRASI_TRANSAKSI")
+  priority        String    @default("NORMAL") // RENDAH | NORMAL | TINGGI
+  assignedToId    String?
+  openedAt        DateTime  @default(now())
+  closedAt        DateTime?
+  createdById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  client       Client               @relation(fields: [clientId], references: [id])
+  assignedTo   User?                @relation("TransactionAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy    User?                @relation("TransactionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  parties      TransactionParty[]
+  properties   Property[]
+  deeds        Deed[]
+  documents    Document[]
+  invoices     Invoice[]
+  appointments Appointment[]
+  tasks        WorkTask[]
+  workflow     WorkflowHistory[]
+  deadlines    LegalDeadline[]
+  governmentSubmissions GovernmentSubmission[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([type])
+  @@index([deletedAt])
+  @@index([deletedAt, status, createdAt])
+}
+
+model TransactionParty {
+  id            String  @id @default(uuid())
+  transactionId String
+  role          String  // PENJUAL | PEMBELI | PEMBERI_HAK | PENERIMA_HAK | SAKSI | KUASA | LAINNYA
+  name          String
+  nik           String?
+  address       String?
+  phone         String?
+  clientId      String?
+  notes         String?
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  client      Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+}
+
+model DeedType {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  name       String
+  category   String   // NOTARIS | PPAT
+  templatePath String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  deeds Deed[]
+}
+
+model Deed {
+  id             String    @id @default(uuid())
+  deedNumber     String    @unique
+  deedTypeId     String
+  deedDate       DateTime
+  transactionId  String?
+  clientId       String
+  status         String    @default("DRAFT") // DRAFT | REVIEW | APPROVED | SIGNED | REGISTERED | ARCHIVED | CANCELLED
+  title          String?
+  penghadap      String?
+  komparisi      String?
+  premis         String?
+  isi            String?
+  penutup        String?
+  witnessesJson  String?
+  draftMakerId   String?
+  notaryId       String?
+  signedAt       DateTime?
+  minutaFilePath String?
+  documentId     String?
+  notes          String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  deedType      DeedType          @relation(fields: [deedTypeId], references: [id])
+  transaction   Transaction?      @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  client        Client            @relation(fields: [clientId], references: [id])
+  draftMaker    User?             @relation("DeedDraftMaker", fields: [draftMakerId], references: [id], onDelete: SetNull)
+  notary        User?             @relation("DeedNotary", fields: [notaryId], references: [id], onDelete: SetNull)
+  document      Document?         @relation("DeedMainDocument", fields: [documentId], references: [id], onDelete: SetNull)
+  parties       DeedParty[]
+  revisions     DeedRevision[]
+  repertorium   DeedRepertorium?
+  protocol      ProtocolRegister?
+  documents     Document[]        @relation("DocumentDeed")
+  appointments  Appointment[]
+  tasks         WorkTask[]
+  workflow      WorkflowHistory[]
+  deadlines     LegalDeadline[]
+  invoices      Invoice[]
+
+  @@index([clientId])
+  @@index([deedTypeId])
+  @@index([status])
+  @@index([deedDate])
+  @@index([transactionId])
+  @@index([status, signedAt])
+  @@index([createdAt])
+}
+
+model DeedParty {
+  id        String  @id @default(uuid())
+  deedId    String
+  role      String
+  name      String
+  nik       String?
+  address   String?
+  phone     String?
+  clientId  String?
+  notes     String?
+
+  deed   Deed    @relation(fields: [deedId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([deedId])
+}
+
+model DeedRevision {
+  id          String   @id @default(uuid())
+  deedId      String
+  revisionNo  Int
+  snapshotJson String
+  changeNote  String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  deed Deed @relation(fields: [deedId], references: [id], onDelete: Cascade)
+
+  @@unique([deedId, revisionNo])
+  @@index([deedId])
+}
+
+model DeedRepertorium {
+  id           String   @id @default(uuid())
+  deedId       String   @unique
+  number       Int
+  year         Int
+  registeredAt DateTime @default(now())
+  notaryId     String?
+  notes        String?
+
+  deed Deed @relation(fields: [deedId], references: [id])
+
+  @@unique([number, year])
+  @@index([year])
+}
+
+model ProtocolRegister {
+  id             String   @id @default(uuid())
+  deedId         String?  @unique
+  registerNumber Int
+  year           Int
+  sequenceNo     Int
+  protocolType   String   // MINUTA | SALINAN | ARSIP
+  location       String?
+  depositedAt    DateTime @default(now())
+  notes          String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  deed      Deed? @relation(fields: [deedId], references: [id])
+  createdBy User? @relation("ProtocolCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([registerNumber, year])
+  @@index([year])
+}
+
+model Property {
+  id                String  @id @default(uuid())
+  transactionId     String?
+  certificateNumber String?
+  rightType         String? // HAK_MILIK | HAK_GUNA_BANGUNAN | HAK_GUNA_USAHA | HAK_PAKAI | HAK_PENGELOLAAN | LAINNYA
+  landArea          Float?
+  buildingArea      Float?
+  address           String?
+  kelurahan         String?
+  kecamatan         String?
+  kabupaten         String?
+  provinsi          String?
+  ownerName         String?
+  nop               String?
+  njop              Int?
+  transactionPrice  Int?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  transaction  Transaction?  @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  certificates Certificate[]
+  deadlines    LegalDeadline[]
+
+  @@index([transactionId])
+}
+
+model Certificate {
+  id           String    @id @default(uuid())
+  propertyId   String
+  number       String
+  type         String    // HM | HGB | HP | HPL | HAK_ADAT | LAINNYA
+  issuedAt     DateTime?
+  expiryAt     DateTime?
+  ownerName    String?
+  documentId   String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  document Document? @relation("CertificateDocument", fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId])
+  @@index([number])
+}
+
+model DocumentCategory {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  documents Document[]
+}
+
+model Document {
+  id            String    @id @default(uuid())
+  uid           String    @unique @default(uuid())
+  title         String
+  categoryId    String
+  clientId      String?
+  transactionId String?
+  deedId        String?
+  fileName      String
+  storagePath   String
+  mimeType      String
+  sizeBytes     Int
+  checksum      String
+  version       Int       @default(1)
+  isConfidential Boolean  @default(false)
+  notes         String?
+  uploadedById  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  category     DocumentCategory   @relation(fields: [categoryId], references: [id])
+  client       Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  transaction  Transaction?       @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  deed         Deed?              @relation("DocumentDeed", fields: [deedId], references: [id], onDelete: SetNull)
+  uploadedBy   User?              @relation("DocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  versions     DocumentVersion[]
+  identities   ClientIdentity[]   @relation("IdentityDocument")
+  companyLegalities ClientCompany[] @relation("CompanyLegalityDocument")
+  certificates Certificate[]      @relation("CertificateDocument")
+  deals        Deed[]             @relation("DeedMainDocument")
+  expenses     Expense[]
+
+  @@index([categoryId])
+  @@index([clientId])
+  @@index([transactionId])
+  @@index([deedId])
+  @@index([deletedAt])
+  @@index([deletedAt, createdAt])
+}
+
+model DocumentVersion {
+  id           String   @id @default(uuid())
+  documentId   String
+  version      Int
+  fileName     String
+  storagePath  String
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  uploadedById String?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@unique([documentId, version])
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  number        String   @unique
+  clientId      String
+  transactionId String?
+  deedId        String?
+  status        String   @default("DRAFT") // DRAFT | UNPAID | PARTIAL | PAID | VOID
+  issueDate     DateTime @default(now())
+  dueDate       DateTime?
+  subtotal      Int      @default(0)
+  discount      Int      @default(0)
+  taxPercent    Float    @default(0)
+  taxAmount     Int      @default(0)
+  total         Int      @default(0)
+  paidAmount    Int      @default(0)
+  notes         String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client      Client       @relation(fields: [clientId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  deed        Deed?        @relation(fields: [deedId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  items       InvoiceItem[]
+  payments    Payment[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([issueDate])
+}
+
+model InvoiceItem {
+  id          String @id @default(uuid())
+  invoiceId   String
+  kind        String // JASA_NOTARIS | JASA_PPAT | ADMINISTRASI | PAJAK | LAINNYA
+  description String
+  quantity    Float  @default(1)
+  unitPrice   Int    @default(0)
+  amount      Int    @default(0)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id           String   @id @default(uuid())
+  number       String   @unique
+  invoiceId    String
+  amount       Int
+  method       String   // TUNAI | TRANSFER | QRIS | CEK | LAINNYA
+  paidAt       DateTime @default(now())
+  reference    String?
+  notes        String?
+  receivedById String?
+  createdAt    DateTime @default(now())
+
+  invoice    Invoice @relation(fields: [invoiceId], references: [id])
+  receivedBy User?   @relation("PaymentReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([paidAt])
+}
+
+model Expense {
+  id                 String   @id @default(uuid())
+  number             String   @unique
+  category           String   // OPERASIONAL | GAJI | SEWA | UTILITAS | PERLENGKAPAN | PERPAJAKAN | LAINNYA
+  description        String
+  amount             Int
+  expenseDate        DateTime
+  paidTo             String?
+  method             String   @default("TUNAI")
+  receiptDocumentId  String?
+  createdById        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  receiptDocument Document? @relation(fields: [receiptDocumentId], references: [id], onDelete: SetNull)
+  createdBy       User?     @relation("ExpenseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([expenseDate])
+  @@index([category])
+}
+
+model Appointment {
+  id            String   @id @default(uuid())
+  title         String
+  clientId      String?
+  transactionId String?
+  deedId        String?
+  type          String   @default("PENANDATANGANAN") // KONSULTASI | PENANDATANGANAN | VERIFIKASI | LAINNYA
+  startAt       DateTime
+  endAt         DateTime?
+  location      String?
+  assignedToId  String?
+  status        String   @default("TERJADWAL") // TERJADWAL | SELESAI | DIBATALKAN
+  notes         String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  deed        Deed?        @relation(fields: [deedId], references: [id], onDelete: SetNull)
+  assignedTo  User?        @relation("AppointmentAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([startAt])
+  @@index([status])
+}
+
+model WorkTask {
+  id            String    @id @default(uuid())
+  title         String
+  description   String?
+  transactionId String?
+  deedId        String?
+  assignedToId  String?
+  dueDate       DateTime?
+  status        String    @default("TODO") // TODO | IN_PROGRESS | DONE | CANCELLED
+  priority      String    @default("NORMAL")
+  createdById   String?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  deed        Deed?        @relation(fields: [deedId], references: [id], onDelete: SetNull)
+  assignedTo  User?        @relation("TaskAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([dueDate])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String?
+  type      String   @default("INFO") // INFO | WARNING | DEADLINE | DOCUMENT
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    String?
+  username  String
+  action    String
+  entity    String
+  entityId  String?
+  before    String?
+  after     String?
+  meta      String?
+  createdAt DateTime @default(now())
+  prevHash  String?
+  hash      String
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([action])
+}
+
+model BackupLog {
+  id          String   @id @default(uuid())
+  fileName    String
+  type        String   // MANUAL | AUTO | PRE_MIGRATION
+  sizeBytes   Int
+  checksum    String
+  encryption  String   // AES-256-GCM
+  status      String   // SUCCESS | FAILED | RESTORED
+  notes       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+model NumberingSequence {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  prefix      String
+  pattern     String
+  lastNumber  Int      @default(0)
+  periodKey   String   @default("")
+  resetPeriod String   @default("NONE") // NONE | YEAR | MONTH
+  updatedAt   DateTime @updatedAt
+}
+
+model Setting {
+  key         String   @id
+  value       String
+  group       String   @default("UMUM")
+  description String?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+
+  updatedBy User? @relation("SettingUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+model LegalDeadline {
+  id            String   @id @default(uuid())
+  title         String
+  type          String   // SKMHT | PENDAFTARAN | PERPANJANGAN | PEMBAYARAN | LAINNYA
+  dueDate       DateTime
+  transactionId String?
+  deedId        String?
+  propertyId    String?
+  status        String   @default("AKTIF") // AKTIF | SELESAI | TERLAMBAT | DIBATALKAN
+  notes         String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  deed        Deed?        @relation(fields: [deedId], references: [id], onDelete: SetNull)
+  property    Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("DeadlineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([dueDate])
+  @@index([status])
+}
+
+model WorkflowHistory {
+  id            String   @id @default(uuid())
+  transactionId String?
+  deedId        String?
+  fromStatus    String?
+  toStatus      String
+  byUserId      String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  deed        Deed?        @relation(fields: [deedId], references: [id], onDelete: Cascade)
+  byUser      User?        @relation(fields: [byUserId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([deedId, createdAt])
+  @@index([createdAt])
+}
+
+// ---------- GOVERNMENT INTEGRATION GATEWAY ----------
+// Integrasi semi-otomatis: data disiapkan lokal, portal resmi dibuka manual,
+// nomor/status resmi dicatat manual beserta bukti. Tidak ada scraping/otomasi.
+
+model GovernmentService {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  agency      String   // AHU | BPN
+  name        String
+  description String?
+  category    String   // BADAN_USAHA | NOTARIAT | PERTANAHAN
+  portalUrl   String
+  mode        String   @default("SEMI_OTOMATIS")
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  submissions GovernmentSubmission[]
+
+  @@index([agency])
+  @@index([isActive])
+  @@map("government_services")
+}
+
+model GovernmentSubmission {
+  id             String    @id @default(uuid())
+  number         String    @unique
+  agency         String    // AHU | BPN
+  serviceId      String
+  clientId       String?
+  transactionId  String?
+  title          String
+  description    String?
+  dataJson       String?
+  internalStatus String    @default("DRAFT")
+  officialStatus String?
+  officialSource String    @default("MANUAL") // PORTAL | SURAT_RESMI | PETUGAS | MANUAL
+  externalRef    String?
+  submittedAt    DateTime?
+  lastStatusAt   DateTime?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  service       GovernmentService         @relation(fields: [serviceId], references: [id])
+  client        Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  transaction   Transaction?              @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  createdBy     User?                     @relation("GovernmentSubmissionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  files         GovernmentSubmissionFile[]
+  statusHistory GovernmentStatusHistory[]
+  references    GovernmentReference[]
+  syncLogs      GovernmentSyncLog[]
+
+  @@index([agency])
+  @@index([internalStatus])
+  @@index([serviceId])
+  @@index([clientId])
+  @@index([createdAt])
+  @@map("government_submissions")
+}
+
+model GovernmentSubmissionFile {
+  id           String    @id @default(uuid())
+  submissionId String
+  kind         String    // DOKUMEN_PENDUKUNG | BUKTI_PENGAJUAN | HASIL_LAYANAN
+  fileName     String
+  storagePath  String
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  notes        String?
+  uploadedById String?
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  submission GovernmentSubmission @relation(fields: [submissionId], references: [id])
+  uploadedBy User?                @relation("GovernmentFileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+  @@index([kind])
+  @@map("government_submission_files")
+}
+
+model GovernmentStatusHistory {
+  id             String   @id @default(uuid())
+  submissionId   String
+  scope          String   // INTERNAL | OFFICIAL
+  fromStatus     String?
+  toStatus       String
+  source         String   @default("MANUAL")
+  officialStatus String?
+  note           String?
+  changedById    String?
+  createdAt      DateTime @default(now())
+
+  submission GovernmentSubmission @relation(fields: [submissionId], references: [id])
+  changedBy  User?                @relation("GovernmentStatusChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+  @@index([createdAt])
+  @@map("government_status_history")
+}
+
+model GovernmentReference {
+  id           String    @id @default(uuid())
+  submissionId String
+  type         String    // NOMOR_PERMOHONAN | NOMOR_BERKAS | NOMOR_VOUCHER | NOMOR_SERTIFIKAT | NOMOR_SK | LAINNYA
+  value        String
+  issuedAt     DateTime?
+  source       String    @default("MANUAL")
+  notes        String?
+  createdById  String?
+  createdAt    DateTime  @default(now())
+
+  submission GovernmentSubmission @relation(fields: [submissionId], references: [id])
+  createdBy  User?                @relation("GovernmentReferenceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+  @@map("government_references")
+}
+
+model GovernmentSyncLog {
+  id           String   @id @default(uuid())
+  submissionId String?
+  agency       String
+  direction    String   // PERSIAPAN | PORTAL | PENGAJUAN | STATUS | BERKAS | KREDENSIAL
+  mode         String   @default("SEMI_OTOMATIS")
+  status       String   @default("PENDING") // PENDING | SUCCESS | FAILED
+  message      String
+  detailJson   String?
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  submission GovernmentSubmission? @relation(fields: [submissionId], references: [id])
+  createdBy  User?                 @relation("GovernmentSyncLogCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+  @@index([agency])
+  @@index([createdAt])
+  @@map("government_sync_logs")
+}
+
+model GovernmentApiConfig {
+  id            String    @id @default(uuid())
+  agency        String    @unique
+  mode          String    @default("SEMI_OTOMATIS")
+  apiEnabled    Boolean   @default(false)
+  baseUrl       String?
+  apiVerifiedAt DateTime?
+  notes         String?
+  updatedById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  updatedBy User? @relation("GovernmentConfigUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("government_api_config")
+}
+
+model GovernmentApiCredential {
+  id          String    @id @default(uuid())
+  agency      String
+  label       String
+  accountHint String?
+  cipherText  String
+  algorithm   String    @default("DPAPI_SAFE_STORAGE")
+  lastUsedAt  DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  createdBy User? @relation("GovernmentCredentialCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([agency, label])
+  @@index([agency])
+  @@map("government_api_credentials")
+}
+
