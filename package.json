@@ -1,6 +1,6 @@
 {
   "name": "notaris-pro",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "NOTARIS PRO — Integrated Notary & PPAT Management System",
   "main": "./out/main/index.js",
   "author": "Kantor Notaris & PPAT",
@@ -40,17 +40,26 @@
       {
         "from": "migrations",
         "to": "migrations",
-        "filter": ["*.sql"]
+        "filter": [
+          "*.sql"
+        ]
       },
       {
         "from": "templates",
         "to": "templates",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.ico",
       "artifactName": "NOTARIS-PRO-Setup-${version}-${arch}.${ext}"
@@ -66,13 +75,18 @@
       "deleteAppDataOnUninstall": false
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Office",
       "icon": "build/icon.png",
       "artifactName": "NOTARIS-PRO-${version}-${arch}.${ext}"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.business",
       "icon": "build/icon.png",
       "artifactName": "NOTARIS-PRO-${version}-${arch}.${ext}"
