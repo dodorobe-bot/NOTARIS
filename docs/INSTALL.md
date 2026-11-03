@@ -105,7 +105,7 @@ Gunakan **Settings → Apps → NOTARIS PRO → Uninstall**. Langkah ini menghap
 Sebelum distribusi, cocokkan checksum installer:
 
 ```powershell
-Get-FileHash "release\NOTARIS-PRO-Setup-1.0.0-x64.exe" -Algorithm SHA256
+Get-FileHash "release\NOTARIS-PRO-Setup-1.0.1-x64.exe" -Algorithm SHA256
 ```
 
 Simpan hasil checksum bersama arsip rilis. Build yang ada saat ini **tidak ditandatangani** (`Get-AuthenticodeSignature` menghasilkan `NotSigned`) karena tidak ada code signing certificate pada mesin build; ini tidak memengaruhi fungsi, tetapi Windows dapat menampilkan peringatan reputasi.
