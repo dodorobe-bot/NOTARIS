@@ -6,8 +6,8 @@ import { log } from './logger'
 import { checkpointDetailed, integrityCheck } from './migrate'
 import { disconnectDb } from '../db'
 import {
-  decryptFileBuffer,
-  encryptFileBuffer,
+  decryptFileTo,
+  encryptFileTo,
   generateRecoveryCode,
   normalizeMasterPassword,
   normalizeRecoveryCode,
@@ -26,15 +26,7 @@ let crashRecovered = false
 let lastError: string | null = null
 let plaintextRemaining: string[] = []
 
-function writeAtomic(dest: string, data: Buffer): void {
-  const tmp = `${dest}.tmp`
-  const fd = fs.openSync(tmp, 'w')
-  try {
-    fs.writeSync(fd, data)
-    fs.fsyncSync(fd)
-  } finally {
-    fs.closeSync(fd)
-  }
+function promoteAtomic(tmp: string, dest: string): void {
   try {
     fs.renameSync(tmp, dest)
   } catch {
@@ -46,6 +38,18 @@ function writeAtomic(dest: string, data: Buffer): void {
   } catch {
     /* best effort */
   }
+}
+
+function writeAtomic(dest: string, data: Buffer): void {
+  const tmp = `${dest}.tmp`
+  const fd = fs.openSync(tmp, 'w')
+  try {
+    fs.writeSync(fd, data)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+  promoteAtomic(tmp, dest)
 }
 
 function removeDbArtifacts(): string[] {
@@ -75,6 +79,13 @@ export function initVault(): void {
       crashRecovered = true
       log.warn('Database plaintext ditemukan bersama vault — mode pemulihan pasca-crash')
     }
+  } else if (fs.existsSync(files.vault())) {
+    // Vault ada tetapi rusak/tidak terbaca. Menampilkan alur SETUP akan membuat pengguna membuat
+    // master password baru yang tidak dapat membuka database lama, jadi aplikasi harus berhenti
+    // di layar kesalahan dengan lokasi berkas yang perlu dipulihkan.
+    status = 'ERROR'
+    lastError = 'Berkas vault.json ada tetapi tidak dapat dibaca. Pulihkan vault.json dari cadangan sebelum melanjutkan; jangan membuat vault baru.'
+    log.error('Vault tidak dapat dibaca', files.vault())
   } else {
     status = 'SETUP'
   }
@@ -125,7 +136,7 @@ export async function createVault(masterPassword: string): Promise<string> {
  * sebelumnya berhenti di tengah penulisan, salinan plaintext divalidasi dan
  * salinan terenkripsi dipakai sebagai cadangan yang utuh.
  */
-function recoverPlaintextDatabase(unwrapped: Buffer): void {
+async function recoverPlaintextDatabase(unwrapped: Buffer): Promise<void> {
   const hasPlain = fs.existsSync(files.db())
   const hasEncrypted = fs.existsSync(files.dbEnc())
   if (!hasPlain && !hasEncrypted) {
@@ -147,15 +158,13 @@ function recoverPlaintextDatabase(unwrapped: Buffer): void {
     }
   }
 
-  const enc = fs.readFileSync(files.dbEnc())
-  let plain: Buffer
+  const tmp = `${files.db()}.restore`
   try {
-    plain = decryptFileBuffer(enc, unwrapped)
+    await decryptFileTo(files.dbEnc(), tmp, unwrapped)
   } catch {
+    fs.rmSync(tmp, { force: true })
     throw new Error('Salinan database terenkripsi tidak dapat didekripsi. Pulihkan dari backup terbaru.')
   }
-  const tmp = `${files.db()}.restore`
-  fs.writeFileSync(tmp, plain)
   const check = integrityCheck(tmp)
   if (!check.ok) {
     fs.rmSync(tmp, { force: true })
@@ -186,7 +195,7 @@ export async function unlockVault(secret: string, useRecovery = false): Promise<
   }
 
   try {
-    recoverPlaintextDatabase(unwrapped)
+    await recoverPlaintextDatabase(unwrapped)
     meta = m
     key = unwrapped
     status = 'UNLOCKED'
@@ -201,7 +210,11 @@ export async function unlockVault(secret: string, useRecovery = false): Promise<
 
 /** Menutup database dan mengenkripsi berkas database ke disk. */
 export async function lockVault(): Promise<void> {
-  if (status !== 'UNLOCKED' || !key) return
+  if (status !== 'UNLOCKED') return
+  if (!key) {
+    // Tanpa kunci sesi, enkripsi ulang tidak mungkin; jangan berpura-pura terkunci.
+    throw new Error('Vault tidak dapat dikunci karena kunci sesi tidak tersedia. Keluar dari aplikasi lalu buka kembali vault.')
+  }
   try {
     await disconnectDb()
   } catch (err) {
@@ -217,17 +230,24 @@ export async function lockVault(): Promise<void> {
   if (!checkpoint.ok) {
     // Selama WAL belum tercheckpoint, isi berkas utama belum mencakup transaksi terbaru.
     // Mengenkripsinya sekarang akan menghasilkan salinan yang kehilangan data.
-    key = null
     plaintextRemaining = [path.basename(files.db())]
     lastError = `Vault tidak dikunci: ${checkpoint.detail}`
     log.error('Vault gagal dikunci', lastError)
     throw new Error(lastError)
   }
-  // Vault masih mengenkripsi seluruh basis data dalam satu buffer, berbeda dari backup yang stream
-  // per entri; memindahkannya ke stream membutuhkan format berkas .enc baru, jadi sengaja ditunda.
-  const plain = fs.readFileSync(files.db())
-  const enc = encryptFileBuffer(plain, key)
-  writeAtomic(files.dbEnc(), enc)
+  // Enkripsi di-stream per blok agar database besar tidak dimuat seluruhnya ke memori. Berkas
+  // sementara ditulis lebih dulu; berkas terenkripsi lama baru diganti setelah penulisan selesai.
+  const tmpEnc = `${files.dbEnc()}.tmp`
+  try {
+    await encryptFileTo(files.db(), tmpEnc, key)
+  } catch (err) {
+    fs.rmSync(tmpEnc, { force: true })
+    plaintextRemaining = [path.basename(files.db())]
+    lastError = `Vault tidak dikunci: enkripsi database gagal (${(err as Error).message}).`
+    log.error(lastError)
+    throw new Error(lastError)
+  }
+  promoteAtomic(tmpEnc, files.dbEnc())
   const encSize = fs.existsSync(files.dbEnc()) ? fs.statSync(files.dbEnc()).size : 0
   if (encSize === 0) {
     key = null

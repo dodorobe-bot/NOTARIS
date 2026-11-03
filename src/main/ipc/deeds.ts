@@ -15,7 +15,7 @@ import { assertDeedContentEditable, assertDeedTransition } from '../lib/workflow
 import { can } from '../lib/rbac'
 import { getSettings } from '../lib/settings'
 import { renderDocx, resolveTemplate } from '../lib/docx'
-import { storeFile } from '../lib/documents'
+import { storeFile, deleteStoredFile } from '../lib/documents'
 import { dirs, safeSegment } from '../lib/paths'
 import { formatDateLong } from '../../shared/format'
 import { DEED_STATUS_LABELS } from '../../shared/constants'
@@ -147,6 +147,12 @@ route('deeds.update', {
     const existing = await db().deed.findUnique({ where: { id: input.id }, include: { parties: true } })
     if (!existing) throw new NotFoundError('Akta tidak ditemukan.')
     assertDeedContentEditable(existing.status)
+    const repertorium = await db().deedRepertorium.findUnique({ where: { deedId: existing.id }, select: { number: true, year: true } })
+    if (repertorium) {
+      throw new ConflictError(
+        `Akta sudah tercatat pada repertorium ${repertorium.number}/${repertorium.year}; isi akta tidak dapat diubah.`,
+      )
+    }
     return inTransaction(async (tx) => {
       const lastRevision = await tx.deedRevision.findFirst({
         where: { deedId: existing.id }, orderBy: { revisionNo: 'desc' }, select: { revisionNo: true },
@@ -296,8 +302,10 @@ route('deeds.generateDocument', {
     const tempPath = path.join(dirs.tmp(), `${safeSegment(deed.deedNumber)}-${Date.now()}.docx`)
     fs.mkdirSync(dirs.tmp(), { recursive: true })
     renderDocx(templatePath, data, tempPath)
+    let storedPath: string | null = null
     try {
       const stored = storeFile(tempPath, fileName, { deedNumber: deed.deedNumber, kind: 'deeds' })
+      storedPath = stored.storagePath
       const categoryCode = variant === 'minuta' ? 'MINUTA' : 'DRAFT_AKTA'
       const category = await db().documentCategory.findUnique({ where: { code: categoryCode } })
       if (!category) throw new Error('Kategori dokumen draft/minuta belum tersedia.')
@@ -354,6 +362,11 @@ route('deeds.generateDocument', {
         return { documentId, fileName, variant }
       })
       return { ...result, filePath: path.join(dirs.documents(), stored.storagePath), templateUsed: templateRel }
+    } catch (err) {
+      // Berkas sudah tersalin ke penyimpanan sebelum transaksi; bila transaksi gagal berkas itu
+      // tidak direferensikan dokumen mana pun dan harus dibuang agar tidak menumpuk tanpa jejak.
+      if (storedPath) deleteStoredFile(storedPath)
+      throw err
     } finally {
       fs.rmSync(tempPath, { force: true })
     }
@@ -401,6 +414,12 @@ route('deeds.repertorium.register', {
     const deed = await db().deed.findUnique({ where: { id: input.deedId }, include: { repertorium: true } })
     if (!deed) throw new NotFoundError('Akta tidak ditemukan.')
     if (deed.repertorium) throw new ConflictError('Akta sudah tercatat dalam repertorium.')
+    // Nomor repertorium menunjuk isi akta. Mencatatkannya saat akta masih DRAFT/REVIEW membuat isi
+    // masih dapat berubah setelah nomor terbit, sehingga pencatatan manual dibatasi pada akta yang
+    // sudah disetujui atau ditandatangani.
+    if (!['APPROVED', 'SIGNED'].includes(deed.status)) {
+      throw new ConflictError('Repertorium hanya dapat dicatat untuk akta yang telah disetujui atau ditandatangani. Gunakan perubahan status menjadi Tercatat.')
+    }
     const year = deed.deedDate.getFullYear()
     return inTransaction(async (tx) => {
       const last = await tx.deedRepertorium.findFirst({ where: { year }, orderBy: { number: 'desc' } })
@@ -450,9 +469,11 @@ route('protocol.create', {
   schema: protocolSchema,
   handler: async (input, ctx) => {
     const year = input.year
-    const lastRegister = await db().protocolRegister.findFirst({ where: { year }, orderBy: { registerNumber: 'desc' } })
-    const lastSeq = await db().protocolRegister.findFirst({ where: { year }, orderBy: { sequenceNo: 'desc' } })
     const created = await inTransaction(async (tx) => {
+      // Nomor urut dibaca di dalam transaksi yang sama dengan penulisannya; membaca di luar transaksi
+      // membuat dua pencatatan bersamaan memperoleh nomor yang sama dan saling menimpa/menabrak unik.
+      const lastRegister = await tx.protocolRegister.findFirst({ where: { year }, orderBy: { registerNumber: 'desc' } })
+      const lastSeq = await tx.protocolRegister.findFirst({ where: { year }, orderBy: { sequenceNo: 'desc' } })
       const row = await tx.protocolRegister.create({
         data: {
           deedId: input.deedId ?? null,

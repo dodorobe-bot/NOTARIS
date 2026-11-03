@@ -2,6 +2,21 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
 
+/**
+ * HTML sumber dipakai juga oleh server pengembangan, yang membutuhkan `'unsafe-inline'` untuk
+ * preamble React Refresh dan koneksi WebSocket HMR. Berkas hasil build tidak memuat skrip inline
+ * maupun HMR, jadi CSP produksi diperketat di tahap transform ini.
+ */
+const productionCsp = {
+  name: 'notaris-production-csp',
+  apply: 'build' as const,
+  transformIndexHtml(html: string): string {
+    return html
+      .replace("script-src 'self' 'unsafe-inline'", "script-src 'self'")
+      .replace("connect-src 'self' ws: http://localhost:* http://127.0.0.1:*", "connect-src 'self'")
+  },
+}
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
@@ -23,7 +38,7 @@ export default defineConfig({
   },
   renderer: {
     root: path.resolve(__dirname, 'src/renderer'),
-    plugins: [react()],
+    plugins: [react(), productionCsp],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, 'src/renderer/src'),

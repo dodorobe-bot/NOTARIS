@@ -58,7 +58,7 @@ export function DeedDetail({ session }: { session: SessionInfo }) {
   const deed = data
   const canManage = session.permissions.includes('deeds.manage')
   const canApprove = session.permissions.includes('deeds.approve')
-  const editable = canManage && ['DRAFT', 'REVIEW'].includes(deed.status)
+  const editable = canManage && ['DRAFT', 'REVIEW', 'APPROVED'].includes(deed.status)
   const allTransitions: string[] = DEED_STATUS_TRANSITIONS[deed.status] ?? []
   const transitions = allTransitions.filter((s) => canApprove || !APPROVAL_STATUSES.includes(s))
   const witnesses = parseWitnesses(deed.witnessesJson)
@@ -326,7 +326,9 @@ export function DeedDetail({ session }: { session: SessionInfo }) {
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-slate-500">Akta belum tercatat pada repertorium. Pencatatan otomatis terjadi saat status menjadi <b>Tercatat</b>.</p>
-                  {canManage && <Button variant="secondary" className="!py-1.5 text-xs" loading={busy} onClick={() => void registerRepertorium()}>Catat Sekarang</Button>}
+                  {canManage && ['APPROVED', 'SIGNED'].includes(deed.status) && (
+                    <Button variant="secondary" className="!py-1.5 text-xs" loading={busy} onClick={() => void registerRepertorium()}>Catat Sekarang</Button>
+                  )}
                 </div>
               )}
             </div>

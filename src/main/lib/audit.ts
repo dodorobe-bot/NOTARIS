@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Tx } from '../db'
 import type { PrismaClient } from '@prisma/client'
+import { ConflictError } from './errors'
 
 type DbLike = Tx | PrismaClient
 
@@ -47,7 +48,18 @@ export function computeAuditHash(row: Omit<AuditChainRow, 'id' | 'hash'>): strin
   return createHash('sha256').update(payload).digest('hex')
 }
 
-export async function audit(tx: DbLike, input: AuditInput): Promise<void> {
+const CHAIN_CONFLICT = 'Rantai audit tidak berkesinambungan'
+const CHAIN_ATTEMPTS = 4
+
+function isPrismaClient(tx: DbLike): tx is PrismaClient {
+  return typeof (tx as { $connect?: unknown }).$connect === 'function'
+}
+
+function isChainConflict(err: unknown): boolean {
+  return err instanceof Error && err.message.includes(CHAIN_CONFLICT)
+}
+
+async function appendRow(tx: DbLike, input: AuditInput): Promise<void> {
   const prev = await tx.auditLog.findFirst({ orderBy: { id: 'desc' }, select: { hash: true } })
   const createdAt = new Date()
   const before = input.before === undefined || input.before === null ? null : JSON.stringify(input.before)
@@ -67,6 +79,51 @@ export async function audit(tx: DbLike, input: AuditInput): Promise<void> {
   }
   const hash = computeAuditHash(row)
   await tx.auditLog.create({ data: { ...row, createdAt, hash } })
+}
+
+/**
+ * Rantai hash hanya sah bila setiap baris menunjuk hash baris tepat sebelumnya.
+ * Membaca ujung rantai lalu menulis baris baru adalah dua operasi terpisah, sehingga dua
+ * penulisan bersamaan pada level PrismaClient dapat membaca kepala yang sama dan menghasilkan
+ * rantai bercabang. Pemanggilan level klien karena itu diantrekan dalam proses ini; di dalam
+ * transaksi, trigger `trg_audit_logs_chain` (migrasi 007) menjadi pengaman terakhir dan
+ * penulisan yang kalah diulang dengan kepala rantai terbaru.
+ */
+let clientChain: Promise<void> = Promise.resolve()
+
+async function appendSerialized(tx: PrismaClient, input: AuditInput): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await appendRow(tx, input)
+      return
+    } catch (err) {
+      if (!isChainConflict(err)) throw err
+      if (attempt >= CHAIN_ATTEMPTS) {
+        throw new ConflictError('Rantai audit sedang diperbarui oleh proses lain. Silakan ulangi tindakan ini.')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5 * attempt))
+    }
+  }
+}
+
+export async function audit(tx: DbLike, input: AuditInput): Promise<void> {
+  if (!isPrismaClient(tx)) {
+    try {
+      await appendRow(tx, input)
+    } catch (err) {
+      if (isChainConflict(err)) {
+        throw new ConflictError('Rantai audit sedang diperbarui oleh proses lain. Silakan ulangi tindakan ini.')
+      }
+      throw err
+    }
+    return
+  }
+  const run = clientChain.then(
+    () => appendSerialized(tx, input),
+    () => appendSerialized(tx, input),
+  )
+  clientChain = run.catch(() => undefined)
+  return run
 }
 
 /**

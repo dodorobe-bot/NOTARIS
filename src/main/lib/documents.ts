@@ -58,11 +58,15 @@ export function storeFile(
   return { fileName: originalName || fileName, storagePath, mimeType, sizeBytes: buf.length, checksum }
 }
 
-export function deleteStoredFile(storagePath: string): void {
+/** Menghapus berkas fisik. Mengembalikan true hanya bila berkas benar-benar tidak ada lagi di disk. */
+export function deleteStoredFile(storagePath: string): boolean {
+  const abs = resolveStoragePath(storagePath)
   try {
-    fs.rmSync(resolveStoragePath(storagePath), { force: true })
+    if (!fs.existsSync(abs)) return true
+    fs.rmSync(abs, { force: true })
+    return !fs.existsSync(abs)
   } catch {
-    /* berkas mungkin sudah tidak ada */
+    return false
   }
 }
 

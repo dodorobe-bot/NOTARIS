@@ -27,7 +27,7 @@ Variabel lingkungan penting:
 
 ```bash
 npm run typecheck   # tsc main/preload + renderer, dengan noUnusedLocals/noUnusedParameters
-npm test            # Vitest, 17 berkas
+npm test            # Vitest, 19 berkas
 npm run e2e         # build + E2E Electron dari sumber
 npm run build       # electron-vite build
 npm run dist:win    # build + installer NSIS
@@ -49,10 +49,11 @@ Konfigurasi: `vitest.config.ts`, environment Node, alias `@shared`, pola `tests/
 
 | Berkas | Jumlah | Cakupan |
 |---|---:|---|
-| `tests/crypto.test.ts` | 9 | Format hash Argon2id (bukan plaintext), verifikasi password benar/salah, hash rusak ditolak, AES-256-GCM bolak-balik, tag diubah gagal, magic `NPVAULT1`, magic salah ditolak, kode pemulihan 24 karakter berkelompok, SHA-256 deterministik |
+| `tests/crypto.test.ts` | 13 | Format hash Argon2id (bukan plaintext), verifikasi password benar/salah, hash rusak ditolak, AES-256-GCM bolak-balik, tag diubah gagal, magic `NPVAULT1`, magic salah ditolak, kode pemulihan 24 karakter berkelompok, SHA-256 deterministik; berkas NPVAULT2 (streaming) bolak-balik utuh dengan SHA-256 sama, berkas NPVAULT1 lama tetap terbaca, byte rusak/gunting/tanpa kunci yang benar ditolak dan tidak meninggalkan berkas hasil separuh |
 | `tests/finance.test.ts` | 11 | Semua token penomoran, tahun dua digit/Romawi, lebar urutan, tanggal Asia/Jakarta, perhitungan subtotal/diskon/pajak/total, diskon melebihi subtotal, pembulatan rupiah, status invoice dari pembayaran, status `DRAFT`/`VOID`, metadata paginasi, rentang tanggal inklusif |
 | `tests/workflow.test.ts` | 6 | Setiap status memiliki label Indonesia, semua transisi menuju status dikenal, `SELESAI`/`BATAL` final, status lain dapat menuju `BATAL`, jalur registrasi→selesai dapat dilalui, tidak ada lompatan mundur dari status akhir |
 | `tests/audit.test.ts` | 8 | Hash deterministik dan sensitif perubahan, rantai utuh diterima, perubahan isi terdeteksi, penghapusan entri tengah terdeteksi, `prevHash` tidak cocok terdeteksi, rantai kosong valid, verifikasi bertahap memberi hasil sama dengan verifikasi sekaligus, entri sesudah titik putus tidak mengubah hasil |
+| `tests/audit-chain-db.test.ts` | 2 | 24 penulisan audit paralel pada SQLite nyata tetap membentuk satu rantai yang lolos verifikasi; trigger migrasi 007 menolak baris dengan `prevHash` yang tidak menyambung ke kepala rantai dan menerima baris yang benar |
 | `tests/backup.test.ts` | 4 | Magic `NPBACKUP1` dan pembacaan ulang header, magic salah ditolak, ciphertext diubah ditolak, kunci salah ditolak |
 | `tests/backup-stream.test.ts` | 12 | Wadah NPBACKUP2: baca-ulang identik untuk codec gzip dan raw, verifikasi tanpa menulis ke disk, penulisan terputus dikenali (footer hilang), byte diubah tertangkap tag GCM, footer dikutak-atik gagal checksum, kunci salah ditolak tanpa meninggalkan berkas separuh jadi, nama entri keluar direktori ditolak, filter `include` hanya menulis yang diminta tetapi semua entri tetap diverifikasi, daftar isi tanpa kunci cocok ukuran sumber, wadah kosong/header asing ditolak, progres per entri |
 | `tests/migrate.test.ts` | 8 | Salinan memakai SQLite Online Backup API dan berisi seluruh data, salinan tidak mengandung data yang masih di WAL sumber, checkpoint melaporkan keberhasilan eksplisit, PRAGMA performa menjaga `synchronous=FULL` dan tidak pernah memuat VACUUM, migrasi 004 membuat enam indeks komposit dan ANALYZE menulis `sqlite_stat1` tanpa merusak integritas, migrasi 005 menjaga indeks FTS5 tetap sinkron saat baris ditambah/diubah/dihapus, migrasi 006 mengganti indeks `deedId` dengan komposit `(deedId, createdAt)` dan rencana kueri riwayat memakai indeks itu sekaligus mengembalikan baris berurutan, PRAGMA menolak nilai tidak masuk akal |
@@ -63,17 +64,18 @@ Konfigurasi: `vitest.config.ts`, environment Node, alias `@shared`, pola `tests/
 | `tests/report-notice.test.ts` | 3 | Pesan pemotongan diam ketika seluruh baris termuat, menyebutkan jumlah yang dimuat dan yang ada, tetap memperingatkan ketika hasil kosong namun datanya ada |
 | `tests/preview-policy.test.ts` | 15 | Keputusan pratinjau per tipe dan ukuran (gambar/PDF/DOCX/XLSX, ukuran nol atau tidak valid); thumbnail tidak memperbesar gambar kecil dan dibatasi 1.024 px; kunci cache berubah saat path, mtime, ukuran, lebar, atau tipe berubah; pembersihan cache membuang berkas kedaluwarsa lalu yang paling lama diakses sampai muat, termasuk berkas tunggal yang melebihi batas |
 | `tests/templates.test.ts` | 5 | Tiga template DOCX bawaan ada dan dapat dirender Docxtemplater tanpa sisa placeholder, hasil render akta memuat nomor, klien, dan penghadap, hanya DOCX aktif yang dianggap template |
+| `tests/vault-file.test.ts` | 2 | Siklus vault nyata pada folder data sementara: buat vault, kunci (database plaintext dan WAL hilang, berkas terenkripsi `NPVAULT2`, tanpa `.tmp`), kata sandi salah ditolak, buka kembali dan data utuh; berkas `NPVAULT1` versi lama tetap dapat dibuka lalu dikunci ulang sebagai `NPVAULT2` |
 | `tests/settings.test.ts` | 5 | Menerima nilai sah, menolak zona waktu tak dikenal, boolean selain `true`/`false`, angka di luar batas, dan format tanggal yang tidak didukung |
 | `tests/time.test.ts` | 5 | Tanggal Jakarta (bukan UTC), awal/akhir hari Jakarta, awal bulan menurut zona kantor, pergeseran bulan, dan konversi komponen lokal ke instant UTC |
 | `tests/government.test.ts` | 36 | Transisi status gateway (jalur sah, empat lompatan ilegal, pesan berbahasa Indonesia, status final tanpa keluaran); syarat bukti tiap status (nomor resmi, bukti pengajuan, hasil layanan, status resmi); `parseGovernmentData` membuang nilai kosong/bukan teks/JSON rusak; gerbang portal hanya menerima `https://layanan.ahu.go.id/` dan `https://mitra.atrbpn.go.id/` serta menolak http, domain mirip (`ahu.go.id.evil.test`), hostname telanjang, `javascript:`; kapabilitas jujur (`officialApiAvailable`/`automatedSubmission` = false); `isEncryptedCredential` dan enkripsi DPAPI; skema Zod (default view, enum, batas 30 isian, kunci 60 karakter, `apiEnabled` tak boleh default true); kelompok tampilan menutup 8 status tanpa tumpang tindih; 17 layanan master unik berprefiks instansi; **enam tes menjalankan migrasi SQL 001–003 pada SQLite in-memory** dan membuktikan pemicu menolak ubah nomor/instansi/layanan, ubah/hapus riwayat status, referensi, log, hapus berkas, serta menyimpan kredensial tanpa awalan `dpapi:` |
-| **Total** | **155** | |
+| **Total** | **163** | |
 
 Hasil terakhir (2026-11-03):
 
 ```
-Test Files  17 passed (17)
-     Tests  155 passed (155)
-  Duration  8.20s
+Test Files  19 passed (19)
+     Tests  163 passed (163)
+  Duration  10.22s
 ```
 
 `npm run typecheck` selesai tanpa keluaran kesalahan (tsc untuk `tsconfig.node.json` dan `tsconfig.web.json`). Kedua proyek kini memakai `noUnusedLocals` dan `noUnusedParameters`; pelanggaran yang muncul (impor mati di `ppat.ts`, `router.ts`, `settings.ts`, `Auth.tsx`, helper `optInt`, dan variabel `nextMonthBegin` yang tidak terpakai) sudah dibersihkan, bukan diredam.
@@ -114,16 +116,17 @@ Skrip: `scripts/e2e.mjs`. Alur lengkap dijalankan pada satu sesi aplikasi dengan
 
 ### 4.2 Hasil terakhir
 
-- **Dev E2E 2026-11-03**: lulus seluruh langkah (`EXIT=0`), termasuk 16 modul antarmuka (termasuk **Performa**), delapan tab gateway, jalur AHU Draft→Selesai dengan bukti, penguncian pengajuan final, kredensial DPAPI, dashboard interaktif, restore, dan verifikasi sesi. Pemeriksaan performa memastikan metrik basis data terbaca dan setiap baris `logs/performance.log` hanya memuat kunci yang diizinkan tanpa NIK/kata sandi uji. Tidak ada error renderer di luar `ResizeObserver`/React DevTools.
-- **Paket E2E 2026-11-03**: lulus seluruh langkah yang sama (`EXIT=0`) terhadap `release/win-unpacked/NOTARIS PRO.exe` hasil pengemasan ulang, termasuk delapan tab gateway, jalur AHU Draft→Selesai dengan bukti, penguncian, kredensial DPAPI, dan restore. Backup paket bernama `notarispro-backup-20261103-001801-manual.npbackup`; data uji berada di `tmp/e2e-packaged` dan berkas gateway fisik di `tmp/e2e-packaged/documents/government/2aa242e8-…`.
+- **Dev E2E 2026-11-03**: lulus seluruh langkah (`EXIT=0`), termasuk 16 modul antarmuka (termasuk **Performa**), delapan tab gateway, jalur AHU Draft→Selesai dengan bukti, penguncian pengajuan final, kredensial DPAPI, dashboard interaktif, restore, dan verifikasi sesi. `audit.verify` melaporkan rantai utuh 75 entri sebelum restore dan 78 entri setelah otomatisasi tenggat. Pemeriksaan performa memastikan metrik basis data terbaca dan setiap baris `logs/performance.log` hanya memuat kunci yang diizinkan tanpa NIK/kata sandi uji. Tidak ada error renderer di luar `ResizeObserver`/React DevTools.
+- **Paket E2E 2026-11-03**: lulus seluruh langkah yang sama (`EXIT=0`) terhadap `release/win-unpacked/NOTARIS PRO.exe` hasil pengemasan ulang, termasuk delapan tab gateway, jalur AHU Draft→Selesai dengan bukti, penguncian, kredensial DPAPI, restore, dan verifikasi rantai audit 78 entri. Backup paket bernama `notarispro-backup-20261103-105140-manual.npbackup`; data uji berada di `tmp/e2e-packaged` dan berkas gateway fisik di `tmp/e2e-packaged/documents/government/…`.
 - Data uji: 1 klien, 7 transaksi (6 paralel + 1 transaksi utama), 1 akta, 2 jadwal, 1 dokumen unggahan + dokumen akta, 1 invoice, 6 pembayaran (1 transfer + 5 tunai paralel), 1 pengeluaran, 7 pengajuan gateway (1 selesai, 5 dibatalkan, 1 BPN siap), 4 berkas gateway, 1 referensi resmi, 28 log gateway, dan 75 entri audit pada kondisi sebelum restore.
 - Setelah restore: klien kembali 1, data pasca-backup hilang, seluruh pengajuan beserta berkas dan nomor resminya tetap ada, rantai audit utuh, lalu otomatisasi tenggat menambah 3 entri audit (total 78).
 
 ### 4.3 Pemeriksaan paket
 
-- Installer: `release/NOTARIS-PRO-Setup-1.0.0-x64.exe`, 156.607.829 byte, SHA-256 `303d194b721bd001d986b5da432e9df76a2e84b9971e620238725b0179d89a64`.
+- Installer: `release/NOTARIS-PRO-Setup-1.0.0-x64.exe`, 156.610.445 byte, SHA-256 `363c35976219fa6c07ddab1d361800980c20ad2d8ce8a0308b9646f2119335fd`.
 - Aplikasi terpasang portabel: `release/win-unpacked/NOTARIS PRO.exe` (249.878.528 byte, SHA-256 `38c1cfbe88e5efb6bda94675ffbdc598ae4f331036fe165db9da0f12030981ac`).
-- Aset terpaket diverifikasi ada: `resources/migrations/001_init.sql` sampai `resources/migrations/006_workflow_index.sql`, `resources/templates/notary/akta-umum.docx`, `resources/app/node_modules/.prisma/client/query_engine-windows.dll.node` (21.182.976 byte).
+- Aset terpaket diverifikasi ada: `resources/migrations/001_init.sql` sampai `resources/migrations/007_audit_chain.sql`, `resources/templates/notary/akta-umum.docx`, `resources/app/node_modules/.prisma/client/query_engine-windows.dll.node` (21.182.976 byte).
+- `npm run build` diverifikasi menghasilkan `index.html` dengan CSP produksi: `script-src 'self'` (tanpa `'unsafe-inline'`) dan `connect-src 'self'` (tanpa `ws:`/`http://localhost:*`), serta hanya satu tag `<script` eksternal.
 - Aplikasi terpaket membuka layar penyiapan dan menyelesaikan E2E penuh, termasuk dashboard interaktif dan seluruh modul Integrasi Pemerintah.
 
 ---
@@ -181,4 +184,4 @@ npm run dist:win
 E2E_APP="release/win-unpacked/NOTARIS PRO.exe" npm run e2e
 ```
 
-Pastikan hasil unit tetap 155 lulus (17 berkas), typecheck tanpa kesalahan termasuk pemeriksaan simbol tak terpakai, kedua E2E lulus, dan checksum installer dicatat pada catatan rilis. Benchmark performa dijalankan terpisah (`node scripts/perf-bench.mjs --profile=smoke|full --label=baseline|after`) di atas dataset sintetis di `tmp/perf-*`; hasil dan perangkat uji dicatat di `docs/PERFORMA.md`, dan angka hanya boleh diklaim dari mesin yang sama.
+Pastikan hasil unit tetap 163 lulus (19 berkas), typecheck tanpa kesalahan termasuk pemeriksaan simbol tak terpakai, kedua E2E lulus, dan checksum installer dicatat pada catatan rilis. Benchmark performa dijalankan terpisah (`node scripts/perf-bench.mjs --profile=smoke|full --label=baseline|after`) di atas dataset sintetis di `tmp/perf-*`; hasil dan perangkat uji dicatat di `docs/PERFORMA.md`, dan angka hanya boleh diklaim dari mesin yang sama.

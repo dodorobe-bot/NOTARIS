@@ -70,7 +70,7 @@ Kegagalan login juga dicatat ke audit sebagai `LOGIN_FAILED`, tanpa menyimpan pa
 | `setup.status` | publik | — | `{ needsSetup, vault }` |
 | `setup.complete` | publik | `officeName`, `notaryName`, `adminFullName`, `username`, `email?`, `password`, `masterPassword`, `confirmMasterPassword` | `{ session, recoveryCode }` — recovery code hanya sekali |
 | `vault.status` | publik | — | `{ status, vaultExists, dbExists, encryptedExists, crashRecovered, error, createdAt }` |
-| `vault.unlock` | publik | `{ password, useRecovery? }` | `{ ok: true }`; setelahnya `prepareDatabase()` dijalankan |
+| `vault.unlock` | publik | `{ password, useRecovery? }` | `{ ok: true }`; setelahnya `prepareDatabase()` dijalankan. Lima percobaan salah per mode (master/recovery) memicu kunci 60 detik (`code: LOCKED_OUT`); percobaan berhasil mereset hitungan |
 | `vault.lock` | sesi | — | `{ ok: true }`; database dienkripsi dan sesi dihapus |
 | `vault.changeMasterPassword` | sesi + `settings.manage` | `{ currentMaster, newMaster }` | `{ ok: true }` |
 | `vault.regenerateRecovery` | sesi + `settings.manage` | — | `{ recoveryCode }` (sekali tampil) |
@@ -535,8 +535,11 @@ await call('government.config.update', { agency: 'AHU', apiEnabled: true })
 ## 6. Catatan integritas dan audit
 
 - Handler yang mengubah data memanggil `audit()` dengan `action`, `entity`, `entityId`, serta `before`/`after` bila relevan.
+- Penulisan audit diserialisasi per proses dan dicoba ulang saat bentrok; migrasi `007_audit_chain.sql` menambahkan trigger `trg_audit_logs_chain` yang menolak `INSERT` bila `prevHash` tidak sama dengan kepala rantai, sehingga rantai tidak dapat bercabang meski ada penulis lain.
 - Tabel audit, repertorium, protokol, revisi akta, dan riwayat workflow dilindungi trigger append-only; percobaan `UPDATE`/`DELETE` langsung ke SQLite akan gagal.
-- Akta tidak dapat dihapus; isi akta dikunci setelah `SIGNED`.
+- Akta tidak dapat dihapus; isi akta dikunci setelah `SIGNED` dan juga setelah nomor repertorium tercatat (termasuk pencatatan manual), sehingga nomor tidak pernah menunjuk isi yang berbeda.
+- `deeds.repertorium.register` hanya menerima akta berstatus `APPROVED`/`SIGNED`.
+- Objek tanah PPAT (`ppat.properties.*`) tidak dapat diubah/dihapus setelah transaksi induknya `SELESAI`/`BATAL`, dan tidak dapat dihapus selama masih memiliki sertifikat atau tenggat; audit menyimpan snapshot objek beserta daftar sertifikat.
 - Nomor urut dialokasikan di dalam transaksi database yang sama dengan pembuatan entitas.
 - `reports.exportPdf`, `reports.exportExcel`, `invoices.exportPdf`, backup, restore, dan ekspor mencatat aksi audit.
 - Route `backup.delete` menghapus berkas backup dan mencatat `DELETE_BACKUP`; berkas dokumen permanen hanya dapat dihapus melalui `documents.purgeFile` dengan izin `settings.manage`.

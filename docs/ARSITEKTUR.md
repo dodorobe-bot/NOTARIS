@@ -59,7 +59,7 @@ Dokumen ini menjelaskan bagaimana aplikasi dibangun, di mana data disimpan, baga
 
 Preload ([src/preload/index.ts](file:///D:/NOTARIS/src/preload/index.ts)) hanya mengekspos `call`, `platform`, dan `versions`. Tidak ada `require`, `fs`, atau `ipcRenderer` mentah yang bocor ke halaman.
 
-Window utama dibuat dengan `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`, dan `webSecurity: true`. Navigasi keluar diblokir; tautan `https://` dibuka di browser sistem melalui `shell.openExternal`. Aplikasi memakai single-instance lock agar dua proses tidak menulis database yang sama.
+Window utama dibuat dengan `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`, dan `webSecurity: true`. Navigasi keluar diblokir; tautan `https://` dibuka di browser sistem melalui `shell.openExternal`. Aplikasi memakai single-instance lock agar dua proses tidak menulis database yang sama; instance kedua langsung keluar dengan `app.exit(0)` sebelum bootstrap. Bila renderer berhenti, pengguna ditawari memuat ulang atau menutup aplikasi. CSP sumber mengizinkan `'unsafe-inline'` dan WebSocket HMR hanya untuk server pengembangan; build produksi menulis `script-src 'self'` dan `connect-src 'self'` (transform di `electron.vite.config.ts`), dan HTML hasil build tidak memuat skrip inline.
 
 ---
 
@@ -71,6 +71,7 @@ Window utama dibuat dengan `sandbox: true`, `contextIsolation: true`, `nodeInteg
 2. `initVault()` membaca `config/vault.json`:
    - tidak ada vault → status `SETUP`;
    - ada vault → `LOCKED`; bila database plaintext ditemukan bersama berkas terenkripsi, `crashRecovered = true`;
+   - berkas vault ada tetapi tidak dapat dibaca → status `ERROR`; layar aplikasi menampilkan lokasi folder data dan menolak alur pembuatan vault baru agar database lama tidak tertimpa;
    - `NOTARIS_VAULT=off` → `DISABLED` (hanya pengembangan/uji).
 3. `registerIpc()` mendaftarkan seluruh route domain.
 4. Saat vault dibuka, `prepareDatabase()` dijalankan: cek migrasi, backup pra-migrasi, terapkan migrasi, buka koneksi Prisma, seed data referensi (role, permission, kategori dokumen, jenis akta, penomoran).
@@ -89,8 +90,8 @@ Database plaintext hanya ada selama sesi terbuka.
 `lockVault()`:
 
 1. `$disconnect()` Prisma;
-2. `PRAGMA wal_checkpoint(TRUNCATE)`;
-3. baca database, enkripsi dengan AES-256-GCM, tulis atomik ke `notaris_pro.db.enc` (tulis `.tmp`, `fsync`, rename, `chmod 0600`);
+2. `PRAGMA wal_checkpoint(TRUNCATE)`; bila checkpoint gagal, penguncian dibatalkan dan kunci sesi dipertahankan agar dapat diulang;
+3. enkripsi database **per blok 1 MiB** ke `notaris_pro.db.enc` (format `NPVAULT2`) di berkas `.tmp`, `fsync`, rename, `chmod 0600`; format `NPVAULT1` lama tetap dapat dibaca saat membuka;
 4. hapus `notaris_pro.db`, `-wal`, `-shm`, `-journal`;
 5. kosongkan kunci di memori dan set status `LOCKED`.
 
@@ -134,6 +135,7 @@ Path dokumen diselesaikan melalui `resolveStoragePath()` yang menolak path kelua
 - **Pembungkusan**: master key dienkripsi dua kali — dengan kunci turunan master password dan kunci turunan recovery code.
 - **KDF**: Argon2id, `memorySize=32768` (32 MiB), `iterations=3`, `parallelism=1`, `hashLength=32`, salt 16 byte acak.
 - **Cipher**: AES-256-GCM dengan IV 12 byte acak; tag autentikasi disimpan.
+- **Berkas database terenkripsi**: format `NPVAULT2` — MAGIC `NPVAULT2`, ukuran blok, lalu blok `panjang | IV | ciphertext | tag` dengan AAD nomor blok, ditutup footer `totalPlain | jumlahBlok | HMAC-SHA256` (kunci turunan HKDF, `info = "notaris-vault-file-v2"`). Enkripsi dan dekripsi di-stream per 1 MiB sehingga memori tidak tumbuh mengikuti ukuran database. Berkas `NPVAULT1` lama (satu span GCM) masih dibaca.
 - **Penyimpanan**: `config/vault.json` berisi metadata KDF + wrapped key (bukan kunci mentah), ditulis atomik dengan izin `0600`.
 - **Ganti master password**: memverifikasi password lama dengan `timingSafeEqual`, lalu membungkus ulang master key. Recovery code dapat dibuat ulang; kode lama langsung tidak berlaku.
 
@@ -191,6 +193,7 @@ Migrasi adalah berkas SQL bernomor di folder `migrations/`:
 - `004_performance.sql` — enam indeks komposit untuk daftar, dashboard, dan audit (§9.8).
 - `005_search_fts.sql` — tabel FTS5 external-content beserta trigger sinkronisasi untuk pencarian global (§9.9).
 - `006_workflow_index.sql` — indeks komposit `WorkflowHistory(deedId, createdAt)` untuk riwayat akta (§9.8).
+- `007_audit_chain.sql` — trigger `trg_audit_logs_chain` yang menolak baris `AuditLog` bila `prevHash` bukan hash baris terakhir, sehingga rantai audit tidak dapat bercabang (§7.3).
 
 Status migrasi dicatat di tabel `_app_migrations (id, applied_at)`. `applyMigrations()`:
 
@@ -217,8 +220,9 @@ Selain itu:
 - `Deed` tidak dapat dihapus (`trg_deeds_no_delete`).
 - Kolom isi akta dikunci setelah status `SIGNED`, `REGISTERED`, atau `ARCHIVED` (`trg_deeds_locked_content`).
 - Repertorium wajib merujuk akta yang valid (`trg_repertorium_requires_deed`).
+- Rantai audit dijaga dua lapis: `audit()` mengantrekan penulisan level klien dalam satu proses, dan trigger `trg_audit_logs_chain` menolak baris yang `prevHash`-nya tidak sama dengan hash baris terakhir. Penulisan yang kalah diperbarui ke kepala rantai terbaru; bila tetap gagal, pengguna menerima kode `CONFLICT` dan dapat mengulang tindakan.
 
-Pemeriksaan tambahan dilakukan di lapisan handler agar pengguna mendapat pesan yang jelas sebelum trigger menolak.
+Pemeriksaan tambahan dilakukan di lapisan handler agar pengguna mendapat pesan yang jelas sebelum trigger menolak. Isi akta juga tidak dapat diubah setelah akta tercatat pada repertorium, dan pencatatan repertorium manual hanya untuk akta `APPROVED`/`SIGNED`.
 
 ### 7.4 Soft delete
 

@@ -177,7 +177,10 @@ export async function snapshotDatabase(dbPath: string, targetPath: string): Prom
     fs.rmSync(targetPath, { force: true })
     conn.close()
     closed = true
-    checkpointDb(dbPath)
+    const checkpoint = checkpointDetailed(dbPath)
+    if (!checkpoint.ok) {
+      throw new Error(`Salinan cadangan database gagal: WAL tidak dapat di-checkpoint (${checkpoint.detail}).`)
+    }
     fs.copyFileSync(dbPath, targetPath)
     return { method: 'copy-after-checkpoint' }
   } finally {

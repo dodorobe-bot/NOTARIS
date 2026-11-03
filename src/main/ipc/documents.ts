@@ -10,7 +10,7 @@ import { audit } from '../lib/audit'
 import { paging, paginated } from '../lib/util'
 import { NotFoundError, ConflictError } from '../lib/errors'
 import { storeFile, deleteStoredFile, copyExport, ALLOWED_EXTENSIONS } from '../lib/documents'
-import { dirs, resolveStoragePath } from '../lib/paths'
+import { resolveStoragePath } from '../lib/paths'
 import { preparePreview } from '../lib/preview'
 
 function windowOrNull(): BrowserWindow | null {
@@ -260,7 +260,7 @@ route('documents.openExternal', {
   handler: async ({ id }) => {
     const doc = await db().document.findFirst({ where: { id, deletedAt: null } })
     if (!doc) throw new NotFoundError('Dokumen tidak ditemukan.')
-    const abs = path.join(dirs.documents(), doc.storagePath)
+    const abs = resolveStoragePath(doc.storagePath)
     if (!fs.existsSync(abs)) throw new Error('Berkas tidak ditemukan di penyimpanan.')
     const err = await shell.openPath(abs)
     if (err) throw new Error(err)
@@ -333,7 +333,9 @@ route('documents.purgeFile', {
     const doc = await db().document.findUnique({ where: { id } })
     if (!doc) throw new NotFoundError('Dokumen tidak ditemukan.')
     if (!doc.deletedAt) throw new ConflictError('Hanya dokumen terhapus yang dapat dibersihkan berkasnya.')
-    deleteStoredFile(doc.storagePath)
+    if (!deleteStoredFile(doc.storagePath)) {
+      throw new ConflictError('Berkas tidak dapat dihapus dari penyimpanan; periksa izin folder dokumen lalu coba lagi.')
+    }
     await audit(db(), {
       userId: ctx.session!.userId, username: ctx.username, action: 'PURGE_FILE', entity: 'Document',
       entityId: id, before: { storagePath: doc.storagePath },

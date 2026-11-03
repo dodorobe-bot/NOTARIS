@@ -22,6 +22,9 @@ import { collectObjectSizes, collectPerformance } from '../lib/perf'
 import { APP_NAME, APP_VERSION } from '../../shared/constants'
 
 const loginAttempts = new Map<string, { count: number; until: number }>()
+const unlockAttempts = new Map<string, { count: number; until: number }>()
+const UNLOCK_MAX_ATTEMPTS = 5
+const UNLOCK_LOCK_MS = 60_000
 
 async function buildSession(userId: string) {
   const user = await db().user.findUnique({
@@ -165,7 +168,29 @@ route('vault.unlock', {
   auth: 'public',
   schema: unlockSchema,
   handler: async (input) => {
-    await unlockVault(input.password, input.useRecovery)
+    const attemptKey = input.useRecovery ? 'recovery' : 'master'
+    const now = Date.now()
+    const attempt = unlockAttempts.get(attemptKey)
+    if (attempt && attempt.until > now) {
+      const secs = Math.ceil((attempt.until - now) / 1000)
+      throw new AppError(`Terlalu banyak percobaan membuka vault. Coba lagi dalam ${secs} detik.`, 'LOCKED_OUT')
+    }
+    try {
+      await unlockVault(input.password, input.useRecovery)
+      unlockAttempts.delete(attemptKey)
+    } catch (err) {
+      // Hanya kesalahan kunci yang dihitung; database rusak dengan kunci benar tidak boleh
+      // membuat pengguna terkunci dari upaya pemulihan berikutnya.
+      if (err instanceof Error && err.message.includes('Master password atau recovery code salah')) {
+        const count = (attempt?.count ?? 0) + 1
+        unlockAttempts.set(attemptKey, {
+          count,
+          until: count >= UNLOCK_MAX_ATTEMPTS ? now + UNLOCK_LOCK_MS : 0,
+        })
+        log.warn('Percobaan membuka vault gagal', { attempt: count, mode: attemptKey })
+      }
+      throw err
+    }
     await prepareDatabase()
     return { vault: vaultStatus() }
   },

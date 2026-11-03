@@ -186,6 +186,12 @@ route('clients.restore', {
   perm: 'clients.manage',
   schema: idSchema,
   handler: async ({ id }, ctx) => {
+    const existing = await db().client.findFirst({ where: { id, deletedAt: { not: null } } })
+    if (!existing) {
+      const active = await db().client.findFirst({ where: { id, deletedAt: null }, select: { id: true } })
+      if (active) throw new ConflictError('Klien masih aktif dan tidak perlu dipulihkan.')
+      throw new NotFoundError('Klien tidak ditemukan.')
+    }
     await inTransaction(async (tx) => {
       await tx.client.update({ where: { id }, data: { deletedAt: null, status: 'AKTIF' } })
       await audit(tx, { userId: ctx.session!.userId, username: ctx.username, action: 'RESTORE', entity: 'Client', entityId: id })

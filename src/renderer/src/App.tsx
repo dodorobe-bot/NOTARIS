@@ -32,7 +32,7 @@ const Backup = lazy(() => import('@/pages/Backup').then((m) => ({ default: m.Bac
 const Performance = lazy(() => import('@/pages/Performance').then((m) => ({ default: m.Performance })))
 const SettingsPage = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.SettingsPage })))
 
-type Phase = 'loading' | 'setup' | 'recovery' | 'unlock' | 'login' | 'app'
+type Phase = 'loading' | 'setup' | 'recovery' | 'unlock' | 'login' | 'app' | 'vault-error'
 
 export default function App() {
   const toast = useToast()
@@ -61,7 +61,9 @@ export default function App() {
       setAppInfo(info)
       setVault(auth.vault ?? setup.vault)
       const status = (auth.vault ?? setup.vault).status
-      if (status === 'SETUP') {
+      if (status === 'ERROR') {
+        setPhase('vault-error')
+      } else if (status === 'SETUP') {
         setPhase('setup')
       } else if (status === 'LOCKED') {
         setPhase('unlock')
@@ -134,6 +136,29 @@ export default function App() {
         <div className="card max-w-md p-6 text-center">
           <p className="text-sm font-bold text-navy-900 dark:text-white">Aplikasi gagal dimuat</p>
           <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{error}</p>
+          <button className="btn-primary mt-4 w-full" onClick={() => void bootstrap()}>Coba lagi</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'vault-error') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F6FA] p-6 dark:bg-[#071427]">
+        <div className="card max-w-lg p-6">
+          <p className="text-sm font-bold text-navy-900 dark:text-white">Vault tidak dapat dibaca</p>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            {vault?.error ?? 'Berkas vault.json ada tetapi tidak dapat dibaca.'}
+          </p>
+          <p className="mt-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            Aplikasi tidak membuat vault baru agar database terenkripsi yang sudah ada tidak tertimpa.
+            Pulihkan berkas <span className="font-mono">vault.json</span> dari cadangan, lalu muat ulang.
+          </p>
+          {appInfo && (
+            <p className="mt-3 break-all rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-500 dark:bg-navy-900 dark:text-slate-400">
+              {appInfo.dataRoot}
+            </p>
+          )}
           <button className="btn-primary mt-4 w-full" onClick={() => void bootstrap()}>Coba lagi</button>
         </div>
       </div>

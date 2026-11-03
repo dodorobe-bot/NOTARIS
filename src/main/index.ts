@@ -27,7 +27,9 @@ let quitting = false
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
-  app.quit()
+  // Instance kedua tidak boleh melanjutkan bootstrap: bila hanya app.quit() dipanggil, proses tetap
+  // menjalankan sisa modul dan dapat membuka jendela kedua di atas database yang sama.
+  app.exit(0)
 }
 
 function createWindow(): void {
@@ -64,6 +66,26 @@ function createWindow(): void {
     if (devUrl && url.startsWith(devUrl)) return
     event.preventDefault()
     log.warn('Navigasi keluar diblokir', { url })
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log.error('Proses renderer berhenti', { reason: details.reason, exitCode: details.exitCode })
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'Tampilan aplikasi berhenti',
+        message: 'Tampilan NOTARIS PRO berhenti karena kesalahan.',
+        detail: `Alasan: ${details.reason}. Data tetap tersimpan; muat ulang untuk melanjutkan.`,
+        buttons: ['Muat ulang', 'Tutup aplikasi'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        if (response === 0) mainWindow?.reload()
+        else app.quit()
+      })
   })
 
   const devUrl = process.env.ELECTRON_RENDERER_URL
@@ -116,17 +138,19 @@ app.on('second-instance', () => {
   }
 })
 
-app.whenReady().then(bootstrap).catch((err) => {
-  log.error('Bootstrap gagal', String(err))
-  void dialog.showMessageBoxSync({
-    type: 'error',
-    title: 'Gagal memulai NOTARIS PRO',
-    message: 'Aplikasi tidak dapat dimulai.',
-    detail: (err as Error).message,
-    buttons: ['Tutup'],
+if (gotLock) {
+  app.whenReady().then(bootstrap).catch((err) => {
+    log.error('Bootstrap gagal', String(err))
+    void dialog.showMessageBoxSync({
+      type: 'error',
+      title: 'Gagal memulai NOTARIS PRO',
+      message: 'Aplikasi tidak dapat dimulai.',
+      detail: (err as Error).message,
+      buttons: ['Tutup'],
+    })
+    app.quit()
   })
-  app.quit()
-})
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
