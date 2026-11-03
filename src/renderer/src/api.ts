@@ -37,6 +37,9 @@ export function useQuery<T = any>(
   const key = JSON.stringify(payload ?? {})
   const enabled = options.enabled !== false
   const mounted = useRef(true)
+  // Nomor urut permintaan: respons lama (mis. pencarian/paginasi sebelumnya) tidak boleh menimpa
+  // hasil yang lebih baru.
+  const sequence = useRef(0)
 
   useEffect(() => {
     mounted.current = true
@@ -48,17 +51,18 @@ export function useQuery<T = any>(
   const load = useCallback(
     async (silent = false) => {
       if (!enabled) return
+      const requestId = ++sequence.current
       if (!silent) setLoading(true)
       try {
         const result = await call<T>(route, JSON.parse(key))
-        if (mounted.current) {
+        if (mounted.current && requestId === sequence.current) {
           setData(result)
           setError(null)
         }
       } catch (err) {
-        if (mounted.current) setError((err as Error).message)
+        if (mounted.current && requestId === sequence.current) setError((err as Error).message)
       } finally {
-        if (mounted.current) setLoading(false)
+        if (mounted.current && requestId === sequence.current) setLoading(false)
       }
     },
     [route, key, enabled],

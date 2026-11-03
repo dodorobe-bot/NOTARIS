@@ -6,6 +6,7 @@ import { can } from '../lib/rbac'
 import { AppError, PermissionError, toErrorMessage } from '../lib/errors'
 import { log } from '../lib/logger'
 import { getSetting } from '../lib/settings'
+import { maintenanceReason } from '../lib/maintenance'
 import { recordRequest } from '../lib/perf-log'
 
 export interface Ctx {
@@ -16,6 +17,8 @@ export interface Ctx {
 export interface RouteDef {
   auth?: 'public' | 'session'
   perm?: string
+  /** `false` untuk rute yang dipanggil berkala (polling) agar tidak memperpanjang sesi diam. */
+  touch?: boolean
   schema?: ZodTypeAny
   // Payload divalidasi runtime oleh `schema`; tipe internal sengaja longgar.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,6 +67,11 @@ export function registerIpc(): void {
     const startedAt = performance.now()
     const elapsed = () => performance.now() - startedAt
     try {
+      const busy = maintenanceReason()
+      if (def.auth !== 'public' && busy) {
+        recordRequest(key, elapsed(), false, 'BUSY')
+        return { ok: false, error: `Aplikasi sedang sibuk (${busy}). Coba lagi setelah selesai.`, code: 'BUSY' }
+      }
       let session = getSession()
       if (def.auth !== 'public') {
         if (!session) throw new AppError('Sesi tidak aktif. Silakan masuk kembali.', 'SESSION_EXPIRED')
@@ -72,7 +80,7 @@ export function registerIpc(): void {
           clearSession()
           throw new AppError('Sesi berakhir karena tidak ada aktivitas. Silakan masuk kembali.', 'SESSION_EXPIRED')
         }
-        touchSession()
+        if (def.touch !== false) touchSession()
         session = getSession()
         if (def.perm && !can(session, def.perm)) throw new PermissionError()
       }

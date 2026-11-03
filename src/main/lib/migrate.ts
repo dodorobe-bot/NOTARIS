@@ -17,7 +17,15 @@ const nodeRequire = createRequire(__filename)
 
 function openSqlite(dbPath: string): SqliteDb {
   const mod = nodeRequire('node:sqlite') as { DatabaseSync: new (p: string) => SqliteDb }
-  return new mod.DatabaseSync(dbPath)
+  const conn = new mod.DatabaseSync(dbPath)
+  try {
+    // Sebelumnya koneksi bantu ini memakai batas tunggu bawaan yang sangat singkat, sehingga status
+    // migrasi bisa gagal dibaca saat koneksi utama sedang menulis.
+    conn.exec('PRAGMA busy_timeout=15000')
+  } catch {
+    /* PRAGMA bersifat peningkatan; kegagalan di sini akan terlihat pada kueri berikutnya */
+  }
+  return conn
 }
 
 export function sqliteAvailable(): boolean {
@@ -48,8 +56,10 @@ export function pendingMigrations(dbPath: string): string[] {
     const applied = new Set(rows.map((r) => String(r.id)))
     return migrationFiles().filter((f) => !applied.has(f))
   } catch (err) {
-    log.warn('Gagal membaca status migrasi', String(err))
-    return migrationFiles()
+    // Menganggap semua migrasi belum diterapkan akan menjalankan ulang migrasi awal dan gagal di
+    // tengah jalan ("table already exists"). Lebih aman menolak membuka database dengan pesan jelas.
+    log.error('Gagal membaca status migrasi', String(err))
+    throw new Error(`Status migrasi database tidak dapat dibaca: ${(err as Error).message}`)
   } finally {
     conn?.close()
   }

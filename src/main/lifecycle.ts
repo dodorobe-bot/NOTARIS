@@ -8,6 +8,7 @@ import { msSinceLastActivity } from './ipc/router'
 import { createBackup } from './lib/backup'
 import { log } from './lib/logger'
 import { getSettings } from './lib/settings'
+import { maintenanceReason } from './lib/maintenance'
 import { zonedDateKey } from './lib/time'
 
 export interface PreparationResult {
@@ -93,6 +94,7 @@ export function scheduleIdleMaintenance(): void {
   maintenanceTimer = setInterval(() => {
     try {
       if (Date.now() - lastAnalyzeAt < ANALYZE_INTERVAL_MS) return
+      if (maintenanceReason()) return
       const vault = vaultStatus()
       if (vault.status === 'LOCKED' || vault.status === 'SETUP' || !vault.dbExists) return
       if (msSinceLastActivity() < IDLE_BEFORE_ANALYZE_MS) return
@@ -106,9 +108,23 @@ export function scheduleIdleMaintenance(): void {
   maintenanceTimer.unref()
 }
 
-/** Backup otomatis harian, dipanggil sekali setelah login. */
+let autoBackupInFlight = false
+
+/**
+ * Backup otomatis harian, dipanggil setelah login. Penjaga `autoBackupInFlight` mencegah dua login
+ * beruntun (atau login ganda) memulai dua backup penuh ke folder yang sama.
+ */
 export async function maybeDailyBackup(vaultKey: Buffer | null): Promise<void> {
-  if (!vaultKey) return
+  if (!vaultKey || autoBackupInFlight) return
+  autoBackupInFlight = true
+  try {
+    await runDailyBackup(vaultKey)
+  } finally {
+    autoBackupInFlight = false
+  }
+}
+
+async function runDailyBackup(vaultKey: Buffer): Promise<void> {
   try {
     const settings = await getSettings()
     if (settings['system.autoBackupDaily'] !== 'true') return

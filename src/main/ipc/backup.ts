@@ -14,6 +14,7 @@ import { disconnectDb } from '../db'
 import { migrationFiles } from '../lib/migrate'
 import { audit as writeAudit } from '../lib/audit'
 import {
+  MAX_LEGACY_BACKUP_BYTES,
   assessBackupLocation,
   createBackup,
   listBackupFiles,
@@ -24,6 +25,7 @@ import {
 } from '../lib/backup'
 import { isStreamContainer } from '../lib/backup-stream'
 import { ConflictError, NotFoundError } from '../lib/errors'
+import { beginMaintenance } from '../lib/maintenance'
 import { log } from '../lib/logger'
 
 function backupFile(fileName: string): string {
@@ -75,23 +77,29 @@ route('backup.create', {
       type: 'MANUAL',
       note: input.note ?? undefined,
     })
-    await db().backupLog.create({
-      data: {
-        fileName: result.fileName,
-        type: 'MANUAL',
-        sizeBytes: result.sizeBytes,
-        checksum: result.checksum,
-        encryption: 'AES-256-GCM',
-        status: 'SUCCESS',
-        notes: input.note ?? `Backup manual${input.includeDocuments ? ' (database + dokumen)' : ' (database)'}`,
-        createdById: ctx.session!.userId,
-      },
-    })
-    await audit(db(), {
-      userId: ctx.session!.userId, username: ctx.username, action: 'BACKUP', entity: 'Backup',
-      entityId: result.fileName,
-      after: { sizeBytes: result.sizeBytes, includeDocuments: input.includeDocuments, keySource: input.passphrase ? 'passphrase' : 'vault' },
-    })
+    // Berkas backup sudah sah dan tersimpan. Kegagalan menulis log/audit tidak boleh membuat
+    // pemanggil mengira backup gagal lalu mengulanginya (menghabiskan disk dengan duplikat).
+    try {
+      await db().backupLog.create({
+        data: {
+          fileName: result.fileName,
+          type: 'MANUAL',
+          sizeBytes: result.sizeBytes,
+          checksum: result.checksum,
+          encryption: 'AES-256-GCM',
+          status: 'SUCCESS',
+          notes: input.note ?? `Backup manual${input.includeDocuments ? ' (database + dokumen)' : ' (database)'}`,
+          createdById: ctx.session!.userId,
+        },
+      })
+      await audit(db(), {
+        userId: ctx.session!.userId, username: ctx.username, action: 'BACKUP', entity: 'Backup',
+        entityId: result.fileName,
+        after: { sizeBytes: result.sizeBytes, includeDocuments: input.includeDocuments, keySource: input.passphrase ? 'passphrase' : 'vault' },
+      })
+    } catch (err) {
+      log.warn('Backup berhasil tetapi log/audit gagal ditulis', String(err))
+    }
     return result
   },
 })
@@ -112,9 +120,11 @@ route('backup.import', {
     const source = result.filePaths[0]
     if (!source.toLowerCase().endsWith('.npbackup')) throw new ConflictError('Berkas bukan backup NOTARIS PRO.')
     const stat = fs.statSync(source)
-    // Format 2 diproses secara streaming sehingga boleh melebihi 4 GB; format lama dimuat ke memori.
-    if (!isStreamContainer(source) && stat.size > 4 * 1024 * 1024 * 1024) {
-      throw new ConflictError('Berkas backup format lama melebihi 4 GB dan tidak dapat dibaca. Buat backup baru dari aplikasi sumber.')
+    // Format 2 diproses secara streaming; format lama dimuat ke memori sehingga ukurannya dibatasi.
+    if (!isStreamContainer(source) && stat.size > MAX_LEGACY_BACKUP_BYTES) {
+      throw new ConflictError(
+        `Berkas backup format lama melebihi ${Math.floor(MAX_LEGACY_BACKUP_BYTES / 1024 / 1024)} MB dan tidak dapat dibaca. Buat backup baru dari aplikasi sumber.`,
+      )
     }
     const base = path.basename(source).replace(/[^a-zA-Z0-9._-]/g, '_')
     let target = path.join(dirs.backups(), base)
@@ -122,12 +132,26 @@ route('backup.import', {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       target = path.join(dirs.backups(), `${base.replace(/\.npbackup$/i, '')}-${stamp}.npbackup`)
     }
-    fs.copyFileSync(source, target)
-    fs.chmodSync(target, 0o600)
-    await audit(db(), {
-      userId: ctx.session!.userId, username: ctx.username, action: 'IMPORT_BACKUP', entity: 'Backup',
-      entityId: path.basename(target), after: { sizeBytes: stat.size },
-    })
+    // Salin ke `.part` lalu ganti nama agar impor yang terputus tidak meninggalkan berkas
+    // setengah jadi yang tampak seperti backup sah.
+    const staging = `${target}.part`
+    try {
+      fs.rmSync(staging, { force: true })
+      fs.copyFileSync(source, staging)
+      fs.chmodSync(staging, 0o600)
+      fs.renameSync(staging, target)
+    } catch (err) {
+      fs.rmSync(staging, { force: true })
+      throw err
+    }
+    try {
+      await audit(db(), {
+        userId: ctx.session!.userId, username: ctx.username, action: 'IMPORT_BACKUP', entity: 'Backup',
+        entityId: path.basename(target), after: { sizeBytes: stat.size },
+      })
+    } catch (err) {
+      log.warn('Impor backup berhasil tetapi audit gagal ditulis', String(err))
+    }
     return { fileName: path.basename(target), sizeBytes: stat.size }
   },
 })
@@ -209,41 +233,55 @@ route('backup.restore', {
       throw new ConflictError(`Backup pengaman sebelum restorasi gagal dibuat, restorasi dibatalkan: ${(err as Error).message}`)
     }
 
+    const manifest: BackupManifest | undefined = check.manifest
+    // Selama database diganti tidak ada rute sesi lain yang boleh berjalan; proses keluar juga
+    // menunggu operasi ini selesai agar database tidak dikunci di tengah restorasi.
+    const release = beginMaintenance('memulihkan backup')
     clearSession()
     try {
-      await disconnectDb()
-      await restoreBackup({ filePath: full, passphrase: input.passphrase, vaultKey, restoreDocuments: true })
-      await prepareDatabase()
-      const manifest: BackupManifest | undefined = check.manifest
-      await db().backupLog.create({
-        data: {
-          fileName: input.fileName, type: 'MANUAL', sizeBytes: fs.statSync(full).size,
-          checksum: manifest?.dbSha256 ?? '', encryption: 'AES-256-GCM', status: 'RESTORED',
-          notes: `Dipulihkan dari backup ${manifest?.createdAt ?? ''}`,
-        },
-      })
-      await writeAudit(db(), {
-        userId: null, username, action: 'RESTORE', entity: 'Backup', entityId: input.fileName,
-        after: { preRestoreBackup: path.basename(preRestoreFile), manifest },
-      })
-      log.info(`Restorasi berhasil dari ${input.fileName}; sesi pengguna diakhiri`)
-      return { ok: true, requiresLogin: true, preRestoreBackup: path.basename(preRestoreFile), manifest }
-    } catch (err) {
-      log.error('Restorasi gagal; mencoba rollback', String(err))
-      let rolledBack = false
       try {
         await disconnectDb()
-        await restoreBackup({ filePath: preRestoreFile, passphrase: vaultKey ? undefined : input.passphrase, vaultKey, restoreDocuments: true })
+        await restoreBackup({ filePath: full, passphrase: input.passphrase, vaultKey, restoreDocuments: true })
         await prepareDatabase()
-        rolledBack = true
-      } catch (rollbackErr) {
-        log.error('Rollback pasca-restorasi gagal', String(rollbackErr))
+      } catch (err) {
+        log.error('Restorasi gagal; mencoba rollback', String(err))
+        let rolledBack = false
+        try {
+          await disconnectDb()
+          await restoreBackup({ filePath: preRestoreFile, passphrase: vaultKey ? undefined : input.passphrase, vaultKey, restoreDocuments: true })
+          await prepareDatabase()
+          rolledBack = true
+        } catch (rollbackErr) {
+          log.error('Rollback pasca-restorasi gagal', String(rollbackErr))
+        }
+        throw new Error(
+          rolledBack
+            ? `Restorasi gagal dan database dikembalikan ke kondisi sebelumnya: ${(err as Error).message}`
+            : `Restorasi gagal dan rollback otomatis juga gagal. Pulihkan manual dari backup ${path.basename(preRestoreFile)}. Detail: ${(err as Error).message}`,
+        )
       }
-      throw new Error(
-        rolledBack
-          ? `Restorasi gagal dan database dikembalikan ke kondisi sebelumnya: ${(err as Error).message}`
-          : `Restorasi gagal dan rollback otomatis juga gagal. Pulihkan manual dari backup ${path.basename(preRestoreFile)}. Detail: ${(err as Error).message}`,
-      )
+
+      // Database sudah berhasil dipulihkan. Kegagalan mencatat log/audit tidak boleh memicu
+      // rollback atas restorasi yang sebenarnya sukses.
+      try {
+        await db().backupLog.create({
+          data: {
+            fileName: input.fileName, type: 'MANUAL', sizeBytes: fs.statSync(full).size,
+            checksum: manifest?.dbSha256 ?? '', encryption: 'AES-256-GCM', status: 'RESTORED',
+            notes: `Dipulihkan dari backup ${manifest?.createdAt ?? ''}`,
+          },
+        })
+        await writeAudit(db(), {
+          userId: null, username, action: 'RESTORE', entity: 'Backup', entityId: input.fileName,
+          after: { preRestoreBackup: path.basename(preRestoreFile), manifest },
+        })
+      } catch (logErr) {
+        log.warn('Restorasi berhasil tetapi log/audit gagal ditulis', String(logErr))
+      }
+      log.info(`Restorasi berhasil dari ${input.fileName}; sesi pengguna diakhiri`)
+      return { ok: true, requiresLogin: true, preRestoreBackup: path.basename(preRestoreFile), manifest }
+    } finally {
+      release()
     }
   },
 })

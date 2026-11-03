@@ -7,6 +7,8 @@ import { files, dirs } from './paths'
 import { log } from './logger'
 import { integrityCheck, migrationFiles, snapshotDatabase, tableNames, tableRowCount } from './migrate'
 import { sha256 } from './crypto'
+import { maintenanceReason } from './maintenance'
+import { AppError } from './errors'
 import { APP_VERSION } from '../../shared/constants'
 import {
   isStreamContainer,
@@ -18,8 +20,12 @@ import {
 } from './backup-stream'
 
 const BACKUP_MAGIC = Buffer.from('NPBACKUP1')
-/** Batas ukuran untuk format lama yang masih memuat seluruh berkas ke memori. */
-const MAX_LEGACY_BACKUP_BYTES = 4 * 1024 * 1024 * 1024
+/**
+ * Batas ukuran untuk format lama yang masih memuat seluruh berkas ke memori. Format NPBACKUP1
+ * hanya dihasilkan versi lama; batas 512 MB menjaga proses utama tidak kehabisan memori saat
+ * membaca berkas ke dalam satu Buffer.
+ */
+export const MAX_LEGACY_BACKUP_BYTES = 512 * 1024 * 1024
 /** Batas jumlah berkas dokumen/template agar pengumpulan entri tidak berjalan tanpa batas. */
 const MAX_ENTRIES = 200_000
 const DB_ENTRY = 'database/notaris_pro.db'
@@ -259,13 +265,60 @@ function uniqueTargetPath(stamp: string, type: string): { filePath: string; file
   return { filePath, fileName }
 }
 
-export async function createBackup(opts: {
+export interface CreateBackupOptions {
   passphrase?: string
   includeDocuments: boolean
   vaultKey?: Buffer | null
   type: 'MANUAL' | 'AUTO' | 'PRE_MIGRATION'
   note?: string
-}): Promise<BackupResult> {
+}
+
+let backupChain: Promise<unknown> = Promise.resolve()
+let backupInFlight = 0
+
+export function backupsInFlight(): number {
+  return backupInFlight
+}
+
+/** Menunggu seluruh backup yang sedang berjalan selesai. */
+export function waitForBackups(): Promise<void> {
+  return backupChain.then(
+    () => undefined,
+    () => undefined,
+  )
+}
+
+/**
+ * Backup dijalankan satu per satu. Dua backup bersamaan membaca database yang sama dan dapat
+ * menghabiskan ruang disk dua kali lipat, sehingga hasilnya tidak dapat diandalkan pada mesin
+ * dengan memori/disk terbatas.
+ */
+export function createBackup(opts: CreateBackupOptions): Promise<BackupResult> {
+  const run = backupChain.then(
+    () => createBackupExclusive(opts),
+    () => createBackupExclusive(opts),
+  )
+  backupChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+async function createBackupExclusive(opts: CreateBackupOptions): Promise<BackupResult> {
+  backupInFlight++
+  try {
+    return await createBackupTask(opts)
+  } finally {
+    backupInFlight--
+  }
+}
+
+async function createBackupTask(opts: CreateBackupOptions): Promise<BackupResult> {
+  const maintenance = maintenanceReason()
+  if (maintenance) {
+    throw new AppError(`Aplikasi sedang sibuk (${maintenance}). Backup tidak dijalankan.`, 'BUSY')
+  }
   const dbPath = files.db()
   if (!fs.existsSync(dbPath)) throw new Error('Database tidak ditemukan untuk dibackup.')
   fs.mkdirSync(dirs.backups(), { recursive: true })
@@ -310,6 +363,8 @@ export async function createBackup(opts: {
     ]
     const plainBytes = entries.reduce((sum, e) => sum + fs.statSync(e.sourcePath).size, 0)
     assertFreeSpace(dirs.backups(), plainBytes)
+    // Folder temp menampung snapshot + hasil verifikasi + wadah, jadi kebutuhan ruangnya dua kali.
+    assertFreeSpace(os.tmpdir(), plainBytes * 2)
 
     let keyInfo: BackupKeyInfo
     if (opts.vaultKey) {
@@ -333,17 +388,27 @@ export async function createBackup(opts: {
 
     const target = uniqueTargetPath(stampOf(createdAt), opts.type)
     // Verifikasi sebelum berkas final ada: cadangan lama baru boleh dianggap setelah yang ini sah.
+    // Database sudah lolos integrity_check sebelum ditulis; checksum hasil baca-ulang memastikan
+    // isinya identik, sehingga pemeriksaan integritas penuh tidak perlu diulang (mahal untuk DB besar).
     await readContainer(partPath, keyInfo.key, path.join(tempDir, 'verify'), undefined, {
       include: (name) => name === MANIFEST_ENTRY || name.startsWith('database/'),
     })
     const verifiedDb = path.join(tempDir, 'verify', DB_ENTRY)
-    const recheck = integrityCheck(verifiedDb)
-    if (!recheck.ok) throw new Error(`Hasil baca-ulang cadangan gagal integrity_check: ${recheck.detail}`)
     if (sha256File(verifiedDb) !== manifest.dbSha256) throw new Error('Checksum database hasil baca-ulang tidak cocok.')
 
-    fs.copyFileSync(partPath, target.filePath)
+    // Tulis ke `.part` di folder tujuan lalu ganti nama secara atomik. Penyalinan langsung ke nama
+    // final dapat meninggalkan berkas setengah jadi yang terlihat seperti backup sah.
+    const staging = `${target.filePath}.part`
+    try {
+      fs.rmSync(staging, { force: true })
+      fs.copyFileSync(partPath, staging)
+      fs.chmodSync(staging, 0o600)
+      fs.renameSync(staging, target.filePath)
+    } catch (err) {
+      fs.rmSync(staging, { force: true })
+      throw err
+    }
     finalPath = target.filePath
-    fs.chmodSync(finalPath, 0o600)
     fs.rmSync(partPath, { force: true })
 
     const sizeBytes = fs.statSync(finalPath).size
@@ -419,24 +484,31 @@ export async function restoreBackup(opts: {
   vaultKey?: Buffer | null
   restoreDocuments?: boolean
 }): Promise<{ restoredDatabase: boolean; restoredDocuments: boolean; manifest: BackupManifest }> {
-  const check = await validateBackup(opts.filePath, opts.passphrase, opts.vaultKey)
-  if (!check.ok || !check.manifest) throw new Error(check.detail)
-
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notaris-restore-'))
   try {
+    if (!fs.existsSync(opts.filePath)) throw new Error('Berkas backup tidak ditemukan.')
+    let manifest: BackupManifest
     if (isStreamContainer(opts.filePath)) {
       const header = readHeader(opts.filePath).header
       const key = await resolveKey(header, opts.passphrase, opts.vaultKey)
       await readContainer(opts.filePath, key, tempDir)
+      const manifestPath = path.join(tempDir, MANIFEST_ENTRY)
+      if (!fs.existsSync(manifestPath)) throw new Error('Manifest backup tidak ditemukan.')
+      manifest = { ...(JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as BackupManifest), format: 2 }
     } else {
+      const stat = fs.statSync(opts.filePath)
+      if (stat.size > MAX_LEGACY_BACKUP_BYTES) throw new Error('Berkas backup lama terlalu besar untuk dibaca.')
       const buf = fs.readFileSync(opts.filePath)
       const { header } = parseBackupFile(buf)
       const key = await resolveKey(header, opts.passphrase, opts.vaultKey)
-      unpackLegacyBackup(buf, key, tempDir)
+      manifest = unpackLegacyBackup(buf, key, tempDir)
     }
 
     const restoredDb = path.join(tempDir, DB_ENTRY)
     if (!fs.existsSync(restoredDb)) throw new Error('Database restorasi tidak ditemukan dalam backup.')
+    // Ekstraksi restore sekaligus menjadi verifikasi akhir: database tidak boleh menyentuh berkas
+    // aktif sebelum checksum dan integritasnya terbukti.
+    if (sha256File(restoredDb) !== manifest.dbSha256) throw new Error('Checksum database backup tidak cocok.')
     const integrity = integrityCheck(restoredDb)
     if (!integrity.ok) throw new Error(`Database backup rusak: ${integrity.detail}`)
 
@@ -445,14 +517,16 @@ export async function restoreBackup(opts: {
     const tmpTarget = `${current}.restoring`
     await retryFileLock(() => fs.rmSync(tmpTarget, { force: true }))
     await retryFileLock(() => fs.copyFileSync(restoredDb, tmpTarget))
-    await retryFileLock(() => fs.rmSync(current, { force: true }))
-    await retryFileLock(() => fs.renameSync(tmpTarget, current))
+    // WAL/SHM/journal milik database lama harus hilang SEBELUM berkas database diganti. Bila
+    // dihapus setelahnya, SQLite dapat memutar ulang WAL lama di atas database hasil restore.
     for (const suffix of ['-wal', '-shm', '-journal']) {
       await retryFileLock(() => fs.rmSync(`${current}${suffix}`, { force: true }))
     }
+    await retryFileLock(() => fs.rmSync(current, { force: true }))
+    await retryFileLock(() => fs.renameSync(tmpTarget, current))
 
     let restoredDocuments = false
-    if ((opts.restoreDocuments ?? check.manifest.documentsIncluded) && fs.existsSync(path.join(tempDir, 'documents'))) {
+    if ((opts.restoreDocuments ?? manifest.documentsIncluded) && fs.existsSync(path.join(tempDir, 'documents'))) {
       copyMerge(path.join(tempDir, 'documents'), dirs.documents())
       restoredDocuments = true
     }
@@ -460,7 +534,7 @@ export async function restoreBackup(opts: {
       copyMerge(path.join(tempDir, 'templates'), dirs.templates())
     }
     log.info(`Restore selesai dari ${path.basename(opts.filePath)}`)
-    return { restoredDatabase: true, restoredDocuments, manifest: check.manifest }
+    return { restoredDatabase: true, restoredDocuments, manifest }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
@@ -476,8 +550,8 @@ function copyMerge(src: string, dest: string): void {
   }
 }
 
-const FILE_LOCK_RETRIES = 20
-const FILE_LOCK_RETRY_MS = 150
+const FILE_LOCK_RETRIES = 40
+const FILE_LOCK_RETRY_MS = 200
 
 function isFileLockError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException)?.code

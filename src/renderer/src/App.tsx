@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 import { call } from '@/api'
 import type { AppInfo, SessionInfo, VaultStatus } from '@/types'
@@ -82,31 +82,54 @@ export default function App() {
     void bootstrap()
   }, [bootstrap])
 
+  const expiringRef = useRef(false)
+  const lastUserActivityRef = useRef(Date.now())
+
   useEffect(() => {
+    // Kegagalan sesi bisa berarti vault sudah terkunci. Bootstrap ulang agar layar yang tampil
+    // sesuai kondisi nyata (unlock, login, atau setup), bukan login yang tidak dapat diproses.
     const onExpired = () => {
+      if (expiringRef.current) return
+      expiringRef.current = true
       setSession(null)
-      setPhase('login')
       toast.info('Sesi berakhir. Silakan masuk kembali.')
+      void bootstrap().finally(() => {
+        window.setTimeout(() => {
+          expiringRef.current = false
+        }, 1_000)
+      })
     }
     window.addEventListener('notaris:session-expired', onExpired)
     return () => window.removeEventListener('notaris:session-expired', onExpired)
-  }, [toast])
+  }, [bootstrap, toast])
+
+  useEffect(() => {
+    if (phase !== 'app') return
+    const mark = () => {
+      lastUserActivityRef.current = Date.now()
+    }
+    const events: (keyof WindowEventMap)[] = ['pointerdown', 'keydown', 'wheel']
+    for (const event of events) window.addEventListener(event, mark, { passive: true })
+    return () => {
+      for (const event of events) window.removeEventListener(event, mark)
+    }
+  }, [phase])
 
   useEffect(() => {
     if (phase !== 'app' || !session) return
     const timer = window.setInterval(async () => {
+      // Perpanjang sesi hanya bila ada interaksi pengguna dalam semenit terakhir; polling latar
+      // belakang tidak boleh membuat batas waktu diam tidak pernah tercapai.
+      const active = Date.now() - lastUserActivityRef.current < 60_000
       try {
-        const res = await call<{ valid: boolean }>('auth.touch')
-        if (!res.valid) {
-          setSession(null)
-          setPhase('login')
-        }
+        const res = await call<{ valid: boolean }>('auth.touch', { activity: active })
+        if (!res.valid) window.dispatchEvent(new Event('notaris:session-expired'))
       } catch {
         /* error sesi ditangani event global */
       }
     }, 60_000)
     return () => window.clearInterval(timer)
-  }, [phase, session])
+  }, [phase, session, toast])
 
   const endSession = useCallback((reason: 'login' | 'locked') => {
     setSession(null)
@@ -118,18 +141,8 @@ export default function App() {
     }
   }, [])
 
-  if (phase === 'loading') {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-navy-950 text-white">
-        <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-gold-500/40 bg-gold-500/10">
-          <Spinner className="h-6 w-6 text-gold-400" />
-        </div>
-        <p className="text-sm font-semibold tracking-[0.18em]">NOTARIS PRO</p>
-        <p className="text-[11px] text-navy-300">Menyiapkan ruang kerja terenkripsi…</p>
-      </div>
-    )
-  }
-
+  // Error harus diperiksa lebih dulu: bootstrap yang gagal meninggalkan phase 'loading', sehingga
+  // urutan sebaliknya membuat layar pembuka berputar selamanya tanpa tombol coba lagi.
   if (error) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F4F6FA] p-6 dark:bg-[#071427]">
@@ -138,6 +151,18 @@ export default function App() {
           <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{error}</p>
           <button className="btn-primary mt-4 w-full" onClick={() => void bootstrap()}>Coba lagi</button>
         </div>
+      </div>
+    )
+  }
+
+  if (phase === 'loading') {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-navy-950 text-white">
+        <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-gold-500/40 bg-gold-500/10">
+          <Spinner className="h-6 w-6 text-gold-400" />
+        </div>
+        <p className="text-sm font-semibold tracking-[0.18em]">NOTARIS PRO</p>
+        <p className="text-[11px] text-navy-300">Menyiapkan ruang kerja terenkripsi…</p>
       </div>
     )
   }

@@ -1,11 +1,12 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { app } from 'electron'
+import { z } from 'zod'
 import { db } from '../db'
 import { route } from './router'
 import { changePasswordSchema, loginSchema, setupSchema, unlockSchema, changeMasterPasswordSchema } from '../../shared/schemas'
 import { hashPassword, verifyPassword } from '../lib/crypto'
-import { createSession, clearSession, getSession, sessionInfo, isSessionExpired } from '../lib/session'
+import { createSession, clearSession, getSession, sessionInfo, isSessionExpired, touchSession } from '../lib/session'
 import { PermissionError, ConflictError, AppError } from '../lib/errors'
 import { audit } from '../lib/audit'
 import { saveSettings, getSetting } from '../lib/settings'
@@ -221,8 +222,10 @@ route('vault.lock', {
       entity: 'System',
       entityId: 'vault',
     })
-    clearSession()
+    // Sesi baru diakhiri setelah vault benar-benar terkunci. Sebaliknya, kegagalan mengenkripsi
+    // akan meninggalkan database plaintext terbuka tanpa sesi yang dapat mencoba mengunci ulang.
     await lockVault()
+    clearSession()
     return vaultStatus()
   },
 })
@@ -341,15 +344,17 @@ route('auth.session', {
 
 route('auth.touch', {
   auth: 'public',
-  handler: async () => {
+  schema: z.object({ activity: z.boolean().optional() }),
+  // Denyut berkala hanya memvalidasi sesi. Sesi diperpanjang hanya bila renderer melaporkan
+  // interaksi pengguna nyata, sehingga batas waktu diam tidak lagi hilang karena polling.
+  handler: async (input: { activity?: boolean }) => {
     const session = getSession()
     if (!session) return { valid: false }
     if (isSessionExpired(await currentTimeout())) {
       clearSession()
       return { valid: false }
     }
-    const { touchSession } = await import('../lib/session')
-    touchSession()
+    if (input.activity) touchSession()
     return { valid: true }
   },
 })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Download, Eye, FileText, FolderOpen, History, Lock, Pencil, Plus, RefreshCw, Trash2, Upload,
@@ -39,6 +39,7 @@ export function Documents({ session }: { session: SessionInfo }) {
 
   const [preview, setPreview] = useState<any | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const previewSequence = useRef(0)
   const [versionsOf, setVersionsOf] = useState<any | null>(null)
 
   const query = useQuery<any>('documents.list', { page, pageSize: 20, search: debounced, categoryId: categoryId || undefined })
@@ -118,15 +119,24 @@ export function Documents({ session }: { session: SessionInfo }) {
     }
   }
 
+  function closePreview() {
+    // Naikkan nomor urut agar respons yang masih berjalan tidak membuka kembali modal.
+    previewSequence.current++
+    setPreview(null)
+    if (routeId) navigate('/dokumen', { replace: true })
+  }
+
   async function openPreview(docId: string, setLoading = true) {
+    const requestId = ++previewSequence.current
     if (setLoading) setPreviewLoading(true)
     try {
       const result = await call<any>('documents.preview', { id: docId })
-      setPreview({ ...result, id: docId })
+      // Klik cepat A lalu B: respons A yang datang belakangan tidak boleh menimpa pratinjau B.
+      if (requestId === previewSequence.current) setPreview({ ...result, id: docId })
     } catch (err) {
-      toast.error((err as Error).message)
+      if (requestId === previewSequence.current) toast.error((err as Error).message)
     } finally {
-      setPreviewLoading(false)
+      if (requestId === previewSequence.current) setPreviewLoading(false)
     }
   }
 
@@ -399,7 +409,7 @@ export function Documents({ session }: { session: SessionInfo }) {
 
       <Modal
         open={!!preview}
-        onClose={() => { setPreview(null); if (routeId) navigate('/dokumen', { replace: true }) }}
+        onClose={closePreview}
         title={preview?.fileName ?? 'Pratinjau Dokumen'}
         subtitle={preview ? [preview.mimeType, preview.sourceBytes ? formatBytes(preview.sourceBytes) : null, preview.thumbnail ? `thumbnail ${preview.width}×${preview.height}` : null].filter(Boolean).join(' · ') : undefined}
         size="xl"
@@ -407,7 +417,7 @@ export function Documents({ session }: { session: SessionInfo }) {
           <>
             {preview?.id && <Button variant="secondary" onClick={() => void openExternal(preview.id)}><FolderOpen className="h-4 w-4" /> Buka Aplikasi</Button>}
             {preview?.id && <Button variant="secondary" onClick={() => void download(preview.id)}><Download className="h-4 w-4" /> Unduh</Button>}
-            <Button onClick={() => { setPreview(null); if (routeId) navigate('/dokumen', { replace: true }) }}>Tutup</Button>
+            <Button onClick={closePreview}>Tutup</Button>
           </>
         }
       >

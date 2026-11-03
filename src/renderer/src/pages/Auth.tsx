@@ -135,6 +135,7 @@ export function SetupWizard({ appInfo, onComplete }: { appInfo: AppInfo | null; 
   }
 
   async function submit() {
+    if (busy) return
     const err = validateStep()
     if (err) return setError(err)
     setBusy(true)
@@ -324,6 +325,7 @@ export function UnlockScreen({
   const [error, setError] = useState<string | null>(null)
 
   async function submit() {
+    if (busy) return
     if (!secret) return setError(mode === 'master' ? 'Masukkan master password.' : 'Masukkan recovery code.')
     setBusy(true)
     setError(null)
@@ -415,6 +417,7 @@ export function LoginScreen({
   }, [])
 
   async function submit() {
+    if (busy) return
     if (!username || !password) return setError('Username dan password wajib diisi.')
     setBusy(true)
     setError(null)

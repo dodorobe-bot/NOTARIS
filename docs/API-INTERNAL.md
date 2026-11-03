@@ -51,6 +51,7 @@ Catatan umum:
 | `VAULT_LOCKED` | Login dicoba saat database masih terenkripsi |
 | `INVALID_CREDENTIALS` | Username/password salah |
 | `LOCKED_OUT` | Terlalu banyak percobaan login; jeda sementara |
+| `BUSY` | Operasi eksklusif (buka/kunci vault atau restore) sedang berjalan; rute sesi ditolak sementara agar tidak membaca database di tengah penggantian berkas |
 | `INACTIVE` | Akun dinonaktifkan |
 | `ERROR` | Kesalahan tak terduga; detail hanya di log |
 
@@ -77,7 +78,7 @@ Kegagalan login juga dicatat ke audit sebagai `LOGIN_FAILED`, tanpa menyimpan pa
 | `auth.login` | publik | `{ username, password }` | `{ session, mustChangePassword }` |
 | `auth.logout` | sesi | — | `{ ok: true }` |
 | `auth.session` | publik | — | `{ session \| null, vault, expired? }` |
-| `auth.touch` | publik | — | `{ valid: boolean }` |
+| `auth.touch` | publik | `{ activity?: boolean }` | `{ valid: boolean }`; sesi hanya diperpanjang bila `activity` bernilai true |
 | `auth.changePassword` | sesi | `{ currentPassword, newPassword }` | `{ ok: true }` |
 | `auth.roles` | sesi | — | Daftar role untuk form pengguna |
 | `app.accounts` | sesi | — | Daftar akun ringkas (id, nama, username, role) |
@@ -252,7 +253,7 @@ Batas baris: `reports.generate`/`exportPdf`/`exportExcel` mengambil maksimal 20.
 |---|---|---|---|
 | `backup.list` | `backup.manage` | — | `{ files, logs }` (200 riwayat terakhir), `folder`, `totals`, `location` (`{ folder, sameVolumeAsData, freeBytes, note, warnings }`) |
 | `backup.create` | `backup.manage` | `{ passphrase?, includeDocuments?, note? }` | Berkas `.npbackup` tervalidasi + manifest |
-| `backup.import` | `backup.manage` | — | Dialog impor; menyalin berkas ke folder backup. Berkas format lama di atas 4 GB ditolak; berkas NPBACKUP2 diterima tanpa batas itu |
+| `backup.import` | `backup.manage` | — | Dialog impor; menyalin berkas ke folder backup. Berkas format lama di atas 512 MB ditolak (dimuat penuh ke memori); berkas NPBACKUP2 diterima tanpa batas itu |
 | `backup.validate` | `backup.manage` | `{ fileName, passphrase? }` | `{ ok, detail, manifest?, tables? }` |
 | `backup.delete` | `backup.manage` | `{ fileName }` | `{ ok: true }` |
 | `backup.openFolder` | `backup.manage` | — | Membuka folder backup |

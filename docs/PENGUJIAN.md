@@ -27,7 +27,7 @@ Variabel lingkungan penting:
 
 ```bash
 npm run typecheck   # tsc main/preload + renderer, dengan noUnusedLocals/noUnusedParameters
-npm test            # Vitest, 22 berkas
+npm test            # Vitest, 23 berkas
 npm run e2e         # build + E2E Electron dari sumber
 npm run build       # electron-vite build
 npm run dist:win    # build + installer NSIS
@@ -57,6 +57,7 @@ Konfigurasi: `vitest.config.ts`, environment Node, alias `@shared`, pola `tests/
 | `tests/audit-multiprocess.test.ts` | 1 | Dua proses Node terpisah menulis 15 entri audit serentak ke satu berkas SQLite WAL nyata; 30 baris tersimpan dengan `entityId` unik dan verifikasi rantai melaporkan 30 entri utuh. Menguji pemetaan `P2003` dari trigger SQLite dan retry konflik rantai yang sebelumnya tidak tertangani |
 | `tests/attempt-guard.test.ts` | 5 | Kunci setelah 5 kegagalan dan tetap terkunci setelah proses dibuat ulang; mode recovery terpisah dari master; berkas status tidak memuat kata sandi; kunci dibuka setelah 60 detik dan satu kegagalan langsung mengunci lagi; keberhasilan menghapus riwayat; berkas rusak/terlalu besar/`until` di masa depan diabaikan atau dijepit; batas percobaan dapat dikonfigurasi untuk login |
 | `tests/restore-failure.test.ts` | 3 | Restore gagal di tengah proses (berkas dokumen menjadi direktori) tidak merusak database, lalu rollback memulihkan database dan dokumen ke kondisi pra-restore tanpa menyisakan `.restoring`; koneksi SQLite yang masih terbuka saat restore ditunggu sampai kunci Windows dilepas (regresi `EPERM`); backup rusak ditolak sebelum database aktif disentuh |
+| `tests/stability.test.ts` | 6 | Dua permintaan kunci vault bersamaan berbagi antrean (tanpa berkas sementara ganda, terenkripsi `NPVAULT2`, data utuh); tujuh siklus kunci/buka tidak meninggalkan plaintext/WAL/`.tmp`/`.restore`; dua backup bersamaan dijalankan berurutan dengan nama berbeda dan tanpa `.part` tersisa; backup ditolak `BUSY` selama operasi eksklusif; `beginMaintenance` kedua ditolak; status migrasi database rusak ditolak dengan pesan jelas alih-alih mengulang semua migrasi |
 | `tests/backup.test.ts` | 4 | Magic `NPBACKUP1` dan pembacaan ulang header, magic salah ditolak, ciphertext diubah ditolak, kunci salah ditolak |
 | `tests/backup-stream.test.ts` | 12 | Wadah NPBACKUP2: baca-ulang identik untuk codec gzip dan raw, verifikasi tanpa menulis ke disk, penulisan terputus dikenali (footer hilang), byte diubah tertangkap tag GCM, footer dikutak-atik gagal checksum, kunci salah ditolak tanpa meninggalkan berkas separuh jadi, nama entri keluar direktori ditolak, filter `include` hanya menulis yang diminta tetapi semua entri tetap diverifikasi, daftar isi tanpa kunci cocok ukuran sumber, wadah kosong/header asing ditolak, progres per entri |
 | `tests/migrate.test.ts` | 8 | Salinan memakai SQLite Online Backup API dan berisi seluruh data, salinan tidak mengandung data yang masih di WAL sumber, checkpoint melaporkan keberhasilan eksplisit, PRAGMA performa menjaga `synchronous=FULL` dan tidak pernah memuat VACUUM, migrasi 004 membuat enam indeks komposit dan ANALYZE menulis `sqlite_stat1` tanpa merusak integritas, migrasi 005 menjaga indeks FTS5 tetap sinkron saat baris ditambah/diubah/dihapus, migrasi 006 mengganti indeks `deedId` dengan komposit `(deedId, createdAt)` dan rencana kueri riwayat memakai indeks itu sekaligus mengembalikan baris berurutan, PRAGMA menolak nilai tidak masuk akal |
@@ -71,14 +72,14 @@ Konfigurasi: `vitest.config.ts`, environment Node, alias `@shared`, pola `tests/
 | `tests/settings.test.ts` | 5 | Menerima nilai sah, menolak zona waktu tak dikenal, boolean selain `true`/`false`, angka di luar batas, dan format tanggal yang tidak didukung |
 | `tests/time.test.ts` | 5 | Tanggal Jakarta (bukan UTC), awal/akhir hari Jakarta, awal bulan menurut zona kantor, pergeseran bulan, dan konversi komponen lokal ke instant UTC |
 | `tests/government.test.ts` | 36 | Transisi status gateway (jalur sah, empat lompatan ilegal, pesan berbahasa Indonesia, status final tanpa keluaran); syarat bukti tiap status (nomor resmi, bukti pengajuan, hasil layanan, status resmi); `parseGovernmentData` membuang nilai kosong/bukan teks/JSON rusak; gerbang portal hanya menerima `https://layanan.ahu.go.id/` dan `https://mitra.atrbpn.go.id/` serta menolak http, domain mirip (`ahu.go.id.evil.test`), hostname telanjang, `javascript:`; kapabilitas jujur (`officialApiAvailable`/`automatedSubmission` = false); `isEncryptedCredential` dan enkripsi DPAPI; skema Zod (default view, enum, batas 30 isian, kunci 60 karakter, `apiEnabled` tak boleh default true); kelompok tampilan menutup 8 status tanpa tumpang tindih; 17 layanan master unik berprefiks instansi; **enam tes menjalankan migrasi SQL 001–003 pada SQLite in-memory** dan membuktikan pemicu menolak ubah nomor/instansi/layanan, ubah/hapus riwayat status, referensi, log, hapus berkas, serta menyimpan kredensial tanpa awalan `dpapi:` |
-| **Total** | **172** | |
+| **Total** | **178** | |
 
 Hasil terakhir (2026-11-03):
 
 ```
-Test Files  22 passed (22)
-     Tests  172 passed (172)
-  Duration  11.30s
+Test Files  23 passed (23)
+     Tests  178 passed (178)
+  Duration  11.27s
 ```
 
 `npm run typecheck` selesai tanpa keluaran kesalahan (tsc untuk `tsconfig.node.json` dan `tsconfig.web.json`). Kedua proyek kini memakai `noUnusedLocals` dan `noUnusedParameters`; pelanggaran yang muncul (impor mati di `ppat.ts`, `router.ts`, `settings.ts`, `Auth.tsx`, helper `optInt`, dan variabel `nextMonthBegin` yang tidak terpakai) sudah dibersihkan, bukan diredam.
@@ -189,4 +190,4 @@ npm run dist:win
 E2E_APP="release/win-unpacked/NOTARIS PRO.exe" npm run e2e
 ```
 
-Pastikan hasil unit tetap 172 lulus (22 berkas), typecheck tanpa kesalahan termasuk pemeriksaan simbol tak terpakai, kedua E2E lulus, dan checksum installer dicatat pada catatan rilis. Benchmark performa dijalankan terpisah (`node scripts/perf-bench.mjs --profile=smoke|full --label=baseline|after`) di atas dataset sintetis di `tmp/perf-*`; hasil dan perangkat uji dicatat di `docs/PERFORMA.md`, dan angka hanya boleh diklaim dari mesin yang sama.
+Pastikan hasil unit tetap 178 lulus (23 berkas), typecheck tanpa kesalahan termasuk pemeriksaan simbol tak terpakai, kedua E2E lulus, dan checksum installer dicatat pada catatan rilis. Benchmark performa dijalankan terpisah (`node scripts/perf-bench.mjs --profile=smoke|full --label=baseline|after`) di atas dataset sintetis di `tmp/perf-*`; hasil dan perangkat uji dicatat di `docs/PERFORMA.md`, dan angka hanya boleh diklaim dari mesin yang sama.

@@ -19,6 +19,7 @@ const dashboardSchema = z.object({
 route('dashboard.get', {
   auth: 'session',
   perm: 'dashboard.view',
+  touch: false,
   schema: dashboardSchema,
   handler: async (input, ctx) => {
     await refreshOverdueDeadlines({ userId: ctx.session!.userId, username: ctx.username })
@@ -155,6 +156,7 @@ route('dashboard.get', {
 
 route('notifications.list', {
   auth: 'session',
+  touch: false,
   handler: async (_p, ctx) => {
     return db().notification.findMany({
       where: { OR: [{ userId: null }, { userId: ctx.session!.userId }] },

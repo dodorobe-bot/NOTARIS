@@ -321,6 +321,9 @@ function GlobalSearch({ open, onClose, onNavigate }: { open: boolean; onClose: (
   useEffect(() => {
     if (!open || debounced.trim().length < 2) {
       setGroups([])
+      // Permintaan sebelumnya dibatalkan (alive=false) sehingga tidak akan mematikan spinner;
+      // tanpa baris ini indikator memuat dapat berputar terus setelah kueri dikosongkan.
+      setLoading(false)
       return
     }
     let alive = true

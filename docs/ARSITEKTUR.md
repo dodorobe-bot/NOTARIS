@@ -158,7 +158,7 @@ Disimpan sebagai `$argon2id$v=19$m=32768,t=3,p=1$<salt>$<hash>` dan diverifikasi
 | Isolasi konteks | `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` |
 | Validasi input | Skema Zod per route sebelum handler |
 | Otorisasi | `perm` pada route + pemeriksaan izin di UI |
-| Sesi | Token sesi di memori main process, timeout idle dari pengaturan, disentuh tiap panggilan |
+| Sesi | Token sesi di memori main process, timeout idle dari pengaturan; diperpanjang oleh panggilan pengguna dan interaksi nyata di renderer. Rute polling (`dashboard.get`, `notifications.list`) dan `auth.touch` tanpa `activity` tidak memperpanjang sesi sehingga batas idle tetap berlaku |
 | Path traversal | `resolveStoragePath`, `safeSegment`; nama entri backup divalidasi `safeName()` (NPBACKUP2) dan `safeZipName()` (format lama) — menolak path absolut, `..`, dan huruf drive |
 | SQL injection | Prisma parameterized + escape identifier pada query diagnostik |
 | Log | Pesan error pengguna tidak membocorkan stack; stack hanya ke log |
@@ -442,7 +442,7 @@ Manifest memuat versi aplikasi, waktu, migrasi terakhir, SHA-256 database, jumla
 └────────────┴──────────────────┴───────────────────────┴─────────────────────┘
 ```
 
-Seluruh isi format lama masih dimuat ke memori, jadi berkas ini dibatasi 4 GB (`MAX_LEGACY_BACKUP_BYTES`) saat validasi dan impor. Backup lama tetap dapat divalidasi dan dipulihkan (`unpackLegacyBackup`), tetapi aplikasi tidak lagi memproduksinya.
+Seluruh isi format lama masih dimuat ke memori, jadi berkas ini dibatasi 512 MB (`MAX_LEGACY_BACKUP_BYTES`) saat validasi dan impor. Backup lama tetap dapat divalidasi dan dipulihkan (`unpackLegacyBackup`), tetapi aplikasi tidak lagi memproduksinya.
 
 ---
 

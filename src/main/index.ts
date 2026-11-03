@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, shell } from 'electron'
 import { ensureDirs } from './lib/paths'
 import { log } from './lib/logger'
 import { initVault, lockVault, vaultStatus } from './lib/vault'
+import { maintenanceReason } from './lib/maintenance'
 import { registerIpc } from './ipc/router'
 import { prepareDatabase, scheduleIdleMaintenance } from './lifecycle'
 
@@ -23,7 +24,9 @@ import './ipc/backup'
 import './ipc/government'
 
 let mainWindow: BrowserWindow | null = null
-let quitting = false
+let quitReady = false
+let lockInProgress = false
+let crashHandled = false
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -116,15 +119,25 @@ async function bootstrap(): Promise<void> {
 
 process.on('uncaughtException', (err) => {
   log.error('Uncaught exception', { message: err.message, stack: err.stack })
-  if (app.isReady()) {
-    void dialog.showMessageBox({
+  if (crashHandled) return
+  crashHandled = true
+  if (!app.isReady()) {
+    app.exit(1)
+    return
+  }
+  // Melanjutkan setelah exception di proses utama tidak aman: tutup lewat jalur normal agar
+  // database tetap dienkripsi (before-quit) dan pengguna tidak bekerja di atas state yang rusak.
+  void dialog
+    .showMessageBox({
       type: 'error',
       title: 'Kesalahan tidak terduga',
-      message: 'NOTARIS PRO mengalami kesalahan tidak terduga.',
-      detail: err.message,
-      buttons: ['Tutup'],
+      message: 'NOTARIS PRO mengalami kesalahan tidak terduga dan akan ditutup.',
+      detail: `${err.message}\n\nDatabase akan dikunci sebelum aplikasi keluar.`,
+      buttons: ['Tutup aplikasi'],
+      defaultId: 0,
+      noLink: true,
     })
-  }
+    .finally(() => app.quit())
 })
 
 process.on('unhandledRejection', (reason) => {
@@ -161,11 +174,52 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', (event) => {
-  if (quitting) return
-  if (vaultStatus().status !== 'UNLOCKED') return
+  if (quitReady) return
   event.preventDefault()
-  quitting = true
+  if (lockInProgress) return
+  if (vaultStatus().status !== 'UNLOCKED') {
+    quitReady = true
+    app.quit()
+    return
+  }
+  lockInProgress = true
   void lockVault()
-    .catch((err) => log.error('Gagal mengunci vault saat keluar', String(err)))
-    .finally(() => app.quit())
+    .then(() => {
+      quitReady = true
+      app.quit()
+    })
+    .catch((err) => {
+      lockInProgress = false
+      const detail = err instanceof Error ? err.message : String(err)
+      log.error('Gagal mengunci vault saat keluar', detail)
+      // Saat restore/kunci lain sedang berjalan, keluar paksa dapat merusak database. Dalam kondisi
+      // itu hanya keluar setelah operasi selesai yang boleh ditawarkan.
+      const busy = maintenanceReason()
+      const forceAllowed = !busy
+      // Keluar tanpa enkripsi hanya atas pilihan eksplisit pengguna; aplikasi tidak boleh
+      // mengakhiri proses secara diam-diam sementara database plaintext masih di disk.
+      void dialog
+        .showMessageBox({
+          type: 'error',
+          title: 'Database belum berhasil dikunci',
+          message: busy
+            ? `Operasi "${busy}" masih berjalan.`
+            : 'NOTARIS PRO belum dapat mengenkripsi database sebelum keluar.',
+          detail: busy
+            ? 'Tunggu hingga operasi selesai, lalu tutup kembali aplikasi.'
+            : `${detail}\n\nJika tetap keluar, berkas database plaintext dapat tertinggal di disk.`,
+          buttons: forceAllowed ? ['Batal keluar', 'Tetap keluar'] : ['Batal keluar'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        })
+        .then(({ response }) => {
+          if (forceAllowed && response === 1) {
+            quitReady = true
+            app.quit()
+          } else if (!mainWindow || mainWindow.isDestroyed()) {
+            createWindow()
+          }
+        })
+    })
 })

@@ -5,6 +5,9 @@ import { files, ensureDirs } from './paths'
 import { log } from './logger'
 import { checkpointDetailed, integrityCheck } from './migrate'
 import { disconnectDb } from '../db'
+import { beginMaintenance } from './maintenance'
+import { backupsInFlight } from './backup'
+import { AppError } from './errors'
 import {
   decryptFileTo,
   encryptFileTo,
@@ -26,13 +29,31 @@ let crashRecovered = false
 let lastError: string | null = null
 let plaintextRemaining: string[] = []
 
+/**
+ * Mengganti berkas tujuan tanpa pernah menghapus salinan lama lebih dulu. Salinan lama dipindahkan
+ * ke `.bak`; bila penggantian gagal, salinan itu dikembalikan sehingga vault tidak pernah tertinggal
+ * tanpa database terenkripsi yang sah.
+ */
 function promoteAtomic(tmp: string, dest: string): void {
+  const backup = `${dest}.bak`
+  const hadDest = fs.existsSync(dest)
+  if (hadDest) {
+    fs.rmSync(backup, { force: true })
+    fs.renameSync(dest, backup)
+  }
   try {
     fs.renameSync(tmp, dest)
-  } catch {
-    fs.rmSync(dest, { force: true })
-    fs.renameSync(tmp, dest)
+  } catch (err) {
+    if (hadDest && !fs.existsSync(dest)) {
+      try {
+        fs.renameSync(backup, dest)
+      } catch {
+        /* salinan lama tetap ada di .bak untuk pemulihan manual */
+      }
+    }
+    throw err
   }
+  if (hadDest) fs.rmSync(backup, { force: true })
   try {
     fs.chmodSync(dest, 0o600)
   } catch {
@@ -159,6 +180,7 @@ async function recoverPlaintextDatabase(unwrapped: Buffer): Promise<void> {
   }
 
   const tmp = `${files.db()}.restore`
+  fs.rmSync(tmp, { force: true })
   try {
     await decryptFileTo(files.dbEnc(), tmp, unwrapped)
   } catch {
@@ -176,8 +198,27 @@ async function recoverPlaintextDatabase(unwrapped: Buffer): Promise<void> {
   log.info(hasPlain ? 'Database plaintext rusak dipulihkan dari salinan terenkripsi' : 'Database didekripsi untuk sesi ini')
 }
 
-export async function unlockVault(secret: string, useRecovery = false): Promise<void> {
-  if (status === 'DISABLED') return
+/**
+ * Operasi kunci dan buka dijalankan berurutan. Dua permintaan bersamaan sebelumnya memakai berkas
+ * sementara yang sama dan dapat saling menimpa; antrean ini memastikan hanya satu yang berjalan.
+ */
+let vaultChain: Promise<unknown> = Promise.resolve()
+
+function serialize<T>(operation: () => Promise<T>): Promise<T> {
+  const run = vaultChain.then(operation, operation)
+  vaultChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+export function unlockVault(secret: string, useRecovery = false): Promise<void> {
+  return serialize(() => unlockVaultNow(secret, useRecovery))
+}
+
+async function unlockVaultNow(secret: string, useRecovery: boolean): Promise<void> {
+  if (status === 'DISABLED' || status === 'UNLOCKED') return
   const m = meta ?? readVaultMeta(files.vault())
   if (!m) throw new Error('Vault belum dibuat')
 
@@ -194,6 +235,7 @@ export async function unlockVault(secret: string, useRecovery = false): Promise<
     throw new Error(lastError)
   }
 
+  const release = beginMaintenance('membuka vault')
   try {
     await recoverPlaintextDatabase(unwrapped)
     meta = m
@@ -205,67 +247,84 @@ export async function unlockVault(secret: string, useRecovery = false): Promise<
     status = 'LOCKED'
     log.error('Kunci benar, tetapi database tidak dapat dibuka', lastError)
     throw new Error(`Kunci benar, tetapi database tidak dapat dibuka: ${lastError}`)
+  } finally {
+    release()
   }
 }
 
+export function lockVault(): Promise<void> {
+  return serialize(lockVaultNow)
+}
+
 /** Menutup database dan mengenkripsi berkas database ke disk. */
-export async function lockVault(): Promise<void> {
+async function lockVaultNow(): Promise<void> {
   if (status !== 'UNLOCKED') return
   if (!key) {
     // Tanpa kunci sesi, enkripsi ulang tidak mungkin; jangan berpura-pura terkunci.
     throw new Error('Vault tidak dapat dikunci karena kunci sesi tidak tersedia. Keluar dari aplikasi lalu buka kembali vault.')
   }
+  if (backupsInFlight() > 0) {
+    throw new AppError('Backup sedang berjalan. Tunggu hingga selesai sebelum mengunci vault.', 'BUSY')
+  }
+  // Pemeriksaan di atas dan pengambilan penjaga berjalan tanpa `await`, sehingga tidak ada backup
+  // baru yang dapat menyela di antara keduanya.
+  const release = beginMaintenance('mengunci vault')
   try {
-    await disconnectDb()
-  } catch (err) {
-    log.warn('Gagal menutup koneksi database', String(err))
-  }
-  if (!fs.existsSync(files.db())) {
-    status = 'LOCKED'
-    key = null
-    plaintextRemaining = []
-    return
-  }
-  const checkpoint = checkpointDetailed(files.db())
-  if (!checkpoint.ok) {
-    // Selama WAL belum tercheckpoint, isi berkas utama belum mencakup transaksi terbaru.
-    // Mengenkripsinya sekarang akan menghasilkan salinan yang kehilangan data.
-    plaintextRemaining = [path.basename(files.db())]
-    lastError = `Vault tidak dikunci: ${checkpoint.detail}`
-    log.error('Vault gagal dikunci', lastError)
-    throw new Error(lastError)
-  }
-  // Enkripsi di-stream per blok agar database besar tidak dimuat seluruhnya ke memori. Berkas
-  // sementara ditulis lebih dulu; berkas terenkripsi lama baru diganti setelah penulisan selesai.
-  const tmpEnc = `${files.dbEnc()}.tmp`
-  try {
-    await encryptFileTo(files.db(), tmpEnc, key)
-  } catch (err) {
+    try {
+      await disconnectDb()
+    } catch (err) {
+      log.warn('Gagal menutup koneksi database', String(err))
+    }
+    if (!fs.existsSync(files.db())) {
+      status = 'LOCKED'
+      key = null
+      plaintextRemaining = []
+      return
+    }
+    const checkpoint = checkpointDetailed(files.db())
+    if (!checkpoint.ok) {
+      // Selama WAL belum tercheckpoint, isi berkas utama belum mencakup transaksi terbaru.
+      // Mengenkripsinya sekarang akan menghasilkan salinan yang kehilangan data.
+      plaintextRemaining = [path.basename(files.db())]
+      lastError = `Vault tidak dikunci: ${checkpoint.detail}`
+      log.error('Vault gagal dikunci', lastError)
+      throw new Error(lastError)
+    }
+    // Enkripsi di-stream per blok agar database besar tidak dimuat seluruhnya ke memori. Berkas
+    // sementara ditulis lebih dulu; berkas terenkripsi lama baru diganti setelah penulisan selesai.
+    const tmpEnc = `${files.dbEnc()}.tmp`
     fs.rmSync(tmpEnc, { force: true })
-    plaintextRemaining = [path.basename(files.db())]
-    lastError = `Vault tidak dikunci: enkripsi database gagal (${(err as Error).message}).`
-    log.error(lastError)
-    throw new Error(lastError)
-  }
-  promoteAtomic(tmpEnc, files.dbEnc())
-  const encSize = fs.existsSync(files.dbEnc()) ? fs.statSync(files.dbEnc()).size : 0
-  if (encSize === 0) {
+    try {
+      await encryptFileTo(files.db(), tmpEnc, key)
+    } catch (err) {
+      fs.rmSync(tmpEnc, { force: true })
+      plaintextRemaining = [path.basename(files.db())]
+      lastError = `Vault tidak dikunci: enkripsi database gagal (${(err as Error).message}).`
+      log.error(lastError)
+      throw new Error(lastError)
+    }
+    promoteAtomic(tmpEnc, files.dbEnc())
+    const encSize = fs.existsSync(files.dbEnc()) ? fs.statSync(files.dbEnc()).size : 0
+    if (encSize === 0) {
+      key = null
+      plaintextRemaining = [path.basename(files.db())]
+      lastError = 'Vault tidak dikunci: salinan terenkripsi tidak tertulis ke disk.'
+      log.error(lastError)
+      throw new Error(lastError)
+    }
     key = null
-    plaintextRemaining = [path.basename(files.db())]
-    lastError = 'Vault tidak dikunci: salinan terenkripsi tidak tertulis ke disk.'
-    log.error(lastError)
-    throw new Error(lastError)
-  }
-  key = null
-  status = 'LOCKED'
-  crashRecovered = false
-  plaintextRemaining = removeDbArtifacts()
-  if (plaintextRemaining.length > 0) {
-    lastError = `Database sudah terenkripsi, tetapi berkas plaintext masih ada di disk: ${plaintextRemaining.join(', ')}`
-    log.error('Vault terkunci dengan berkas plaintext tersisa', lastError)
-  } else {
-    lastError = null
-    log.info('Database terenkripsi dan dikunci')
+    status = 'LOCKED'
+    crashRecovered = false
+    plaintextRemaining = removeDbArtifacts()
+    if (plaintextRemaining.length > 0) {
+      lastError = `Database sudah terenkripsi, tetapi berkas plaintext masih ada di disk: ${plaintextRemaining.join(', ')}`
+      log.error('Vault terkunci dengan berkas plaintext tersisa', lastError)
+    } else {
+      lastError = null
+      log.info('Database terenkripsi dan dikunci')
+    }
+  } finally {
+    release()
   }
 }
 
