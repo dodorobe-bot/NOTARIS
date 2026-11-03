@@ -124,14 +124,14 @@ export function SubmissionsTab({
           placeholder={`Cari nomor, perihal, klien, atau nomor resmi ${agencyLabel}…`}
           className="w-full sm:w-80"
         />
-        <Select value={activeView} onChange={(e) => { setActiveView(e.target.value); setStatus(''); setPage(1) }} className="w-full sm:w-44">
+        <Select value={activeView} onChange={(e) => { setActiveView(e.target.value); setStatus(''); setPage(1) }} className="w-full sm:w-44" aria-label="Saring tampilan pengajuan">
           {GOVERNMENT_VIEW_CODES.map((v) => <option key={v} value={v}>{GOVERNMENT_VIEW_GROUPS[v].label}</option>)}
         </Select>
-        <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="w-full sm:w-44">
+        <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="w-full sm:w-44" aria-label="Saring status pengajuan">
           <option value="">Semua status internal</option>
           {GOVERNMENT_STATUSES.map((s) => <option key={s} value={s}>{governmentStatusLabel(s)}</option>)}
         </Select>
-        <Select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setPage(1) }} className="w-full sm:w-56">
+        <Select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setPage(1) }} className="w-full sm:w-56" aria-label="Saring layanan">
           <option value="">Semua layanan</option>
           {(services.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>

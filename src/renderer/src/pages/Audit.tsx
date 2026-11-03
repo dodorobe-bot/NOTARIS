@@ -85,17 +85,17 @@ export function Audit() {
       <Card className="overflow-hidden">
         <div className="grid gap-2 border-b border-slate-200 p-4 dark:border-navy-800 lg:grid-cols-12">
           <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari pengguna, aksi, entitas, ID…" className="lg:col-span-3" />
-          <Select value={action} onChange={(e) => { setAction(e.target.value); setPage(1) }} className="lg:col-span-2">
+          <Select value={action} onChange={(e) => { setAction(e.target.value); setPage(1) }} className="lg:col-span-2" aria-label="Saring aksi audit">
             <option value="">Semua aksi</option>
             {(query.data?.actions ?? []).map((a: string) => <option key={a} value={a}>{a}</option>)}
           </Select>
-          <Select value={entity} onChange={(e) => { setEntity(e.target.value); setPage(1) }} className="lg:col-span-2">
+          <Select value={entity} onChange={(e) => { setEntity(e.target.value); setPage(1) }} className="lg:col-span-2" aria-label="Saring entitas audit">
             <option value="">Semua entitas</option>
             {(query.data?.entities ?? []).map((e: string) => <option key={e} value={e}>{e}</option>)}
           </Select>
-          <Input value={username} onChange={(e) => { setUsername(e.target.value); setPage(1) }} placeholder="Username" className="lg:col-span-2" />
-          <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1) }} title="Dari tanggal" className="lg:col-span-1" />
-          <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1) }} title="Sampai tanggal" className="lg:col-span-1" />
+          <Input value={username} onChange={(e) => { setUsername(e.target.value); setPage(1) }} placeholder="Username" aria-label="Cari username" className="lg:col-span-2" />
+          <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1) }} title="Dari tanggal" aria-label="Dari tanggal" className="lg:col-span-1" />
+          <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1) }} title="Sampai tanggal" aria-label="Sampai tanggal" className="lg:col-span-1" />
           <Button variant="secondary" className="lg:col-span-1" onClick={resetFilters} disabled={!filtersActive}>Reset</Button>
         </div>
 

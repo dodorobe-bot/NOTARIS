@@ -443,10 +443,13 @@ export async function restoreBackup(opts: {
     const current = files.db()
     // Backup pengaman dibuat oleh pemanggil sebelum restorasi; tidak ada salinan plaintext yang ditinggalkan di sini.
     const tmpTarget = `${current}.restoring`
-    fs.copyFileSync(restoredDb, tmpTarget)
-    fs.rmSync(current, { force: true })
-    fs.renameSync(tmpTarget, current)
-    for (const suffix of ['-wal', '-shm', '-journal']) fs.rmSync(`${current}${suffix}`, { force: true })
+    await retryFileLock(() => fs.rmSync(tmpTarget, { force: true }))
+    await retryFileLock(() => fs.copyFileSync(restoredDb, tmpTarget))
+    await retryFileLock(() => fs.rmSync(current, { force: true }))
+    await retryFileLock(() => fs.renameSync(tmpTarget, current))
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+      await retryFileLock(() => fs.rmSync(`${current}${suffix}`, { force: true }))
+    }
 
     let restoredDocuments = false
     if ((opts.restoreDocuments ?? check.manifest.documentsIncluded) && fs.existsSync(path.join(tempDir, 'documents'))) {
@@ -470,6 +473,31 @@ function copyMerge(src: string, dest: string): void {
     const d = path.join(dest, entry.name)
     if (entry.isDirectory()) copyMerge(s, d)
     else fs.copyFileSync(s, d)
+  }
+}
+
+const FILE_LOCK_RETRIES = 20
+const FILE_LOCK_RETRY_MS = 150
+
+function isFileLockError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException)?.code
+  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES'
+}
+
+/**
+ * Windows dapat menahan berkas database beberapa saat setelah koneksi SQLite ditutup
+ * (delete-pending/memory mapping). Mengganti database tanpa menunggu membuat restore gagal
+ * meski tidak ada masalah izin sebenarnya.
+ */
+async function retryFileLock(operation: () => void): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      operation()
+      return
+    } catch (err) {
+      if (!isFileLockError(err) || attempt >= FILE_LOCK_RETRIES) throw err
+      await new Promise((resolve) => setTimeout(resolve, FILE_LOCK_RETRY_MS))
+    }
   }
 }
 

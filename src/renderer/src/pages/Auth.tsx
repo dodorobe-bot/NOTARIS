@@ -262,7 +262,7 @@ export function SetupWizard({ appInfo, onComplete }: { appInfo: AppInfo | null; 
         </div>
       </div>
       <p className="mt-5 text-center text-[10px] text-slate-400">
-        {appInfo?.name ?? 'NOTARIS PRO'} v{appInfo?.version ?? '1.0.0'} · Data lokal: {appInfo?.dataRoot ?? '—'}
+        {appInfo?.name ?? 'NOTARIS PRO'} v{appInfo?.version ?? '1.0.1'} · Data lokal: {appInfo?.dataRoot ?? '—'}
       </p>
     </AuthLayout>
   )
@@ -385,7 +385,7 @@ export function UnlockScreen({
           </Button>
         </div>
         <p className="mt-4 text-center text-[10px] text-slate-400">
-          {appInfo?.name ?? 'NOTARIS PRO'} v{appInfo?.version ?? '1.0.0'} · {vault.vaultExists ? 'Vault terdeteksi' : 'Vault belum ada'}
+          {appInfo?.name ?? 'NOTARIS PRO'} v{appInfo?.version ?? '1.0.1'} · {vault.vaultExists ? 'Vault terdeteksi' : 'Vault belum ada'}
         </p>
       </div>
     </AuthLayout>
@@ -471,7 +471,7 @@ export function LoginScreen({
         </div>
       </div>
       <p className="mt-5 text-center text-[10px] text-slate-400">
-        {appInfo?.name ?? 'NOTARIS PRO'} v{appInfo?.version ?? '1.0.0'} · {appInfo?.platform ?? ''} · Waktu Asia/Jakarta
+        {appInfo?.name ?? 'NOTARIS PRO'} v{appInfo?.version ?? '1.0.1'} · {appInfo?.platform ?? ''} · Waktu Asia/Jakarta
       </p>
     </AuthLayout>
   )

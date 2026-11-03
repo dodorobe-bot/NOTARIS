@@ -228,7 +228,7 @@ export function Documents({ session }: { session: SessionInfo }) {
       <Card className="p-3">
         <div className="grid gap-2 md:grid-cols-[1fr_240px]">
           <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari judul, nama berkas, atau catatan…" />
-          <Select value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setPage(1) }}>
+          <Select value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setPage(1) }} aria-label="Saring kategori dokumen">
             <option value="">Semua kategori</option>
             {(categories.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>

@@ -32,11 +32,11 @@ export function SyncLogsTab() {
     <div className="space-y-4">
       <Card className="flex flex-wrap items-center gap-2 p-3">
         <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari pesan log atau nomor pengajuan…" className="w-full sm:w-80" />
-        <Select value={agency} onChange={(e) => { setAgency(e.target.value); setPage(1) }} className="w-full sm:w-40">
+        <Select value={agency} onChange={(e) => { setAgency(e.target.value); setPage(1) }} className="w-full sm:w-40" aria-label="Saring instansi log">
           <option value="">Semua instansi</option>
           {GOVERNMENT_AGENCIES.map((a) => <option key={a.value} value={a.value}>{governmentAgencyLabel(a.value)}</option>)}
         </Select>
-        <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="w-full sm:w-56">
+        <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="w-full sm:w-56" aria-label="Saring status log">
           <option value="">Semua hasil</option>
           {GOVERNMENT_SYNC_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </Select>

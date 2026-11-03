@@ -209,15 +209,15 @@ export function Deeds({ session }: { session: SessionInfo }) {
       <Card className="p-3">
         <div className="grid gap-2 lg:grid-cols-[1fr_210px_190px_120px]">
           <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari nomor akta, judul, klien, atau penghadap…" />
-          <Select value={typeId} onChange={(e) => { setTypeId(e.target.value); setPage(1) }}>
+          <Select value={typeId} onChange={(e) => { setTypeId(e.target.value); setPage(1) }} aria-label="Saring jenis akta">
             <option value="">Semua jenis akta</option>
             {(types.data ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </Select>
-          <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}>
+          <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} aria-label="Saring status akta">
             <option value="">Semua status</option>
             {DEED_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </Select>
-          <Select value={year} onChange={(e) => { setYear(e.target.value); setPage(1) }}>
+          <Select value={year} onChange={(e) => { setYear(e.target.value); setPage(1) }} aria-label="Saring tahun akta">
             <option value="">Semua tahun</option>
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </Select>

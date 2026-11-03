@@ -236,11 +236,11 @@ export function Clients({ session }: { session: SessionInfo }) {
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 p-4 dark:border-navy-800">
           <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari nama, kode, NIK, NPWP, telepon…" className="w-full sm:w-80" />
-          <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1) }} className="w-40">
+          <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1) }} className="w-40" aria-label="Saring jenis klien">
             <option value="">Semua jenis</option>
             {CLIENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </Select>
-          <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="w-40">
+          <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} className="w-40" aria-label="Saring status klien">
             <option value="">Semua status</option>
             {CLIENT_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </Select>

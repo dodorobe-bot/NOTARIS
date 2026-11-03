@@ -218,7 +218,7 @@ export function Ppat({ session }: { session: SessionInfo }) {
           <>
             <div className="grid gap-2 p-3 md:grid-cols-[1fr_220px]">
               <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari sertifikat, pemilik, alamat, NOP, transaksi…" />
-              <Select value={rightType} onChange={(e) => { setRightType(e.target.value); setPage(1) }}>
+              <Select value={rightType} onChange={(e) => { setRightType(e.target.value); setPage(1) }} aria-label="Saring jenis hak">
                 <option value="">Semua jenis hak</option>
                 {RIGHT_TYPES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
               </Select>
@@ -272,7 +272,7 @@ export function Ppat({ session }: { session: SessionInfo }) {
           <>
             <div className="grid gap-2 p-3 md:grid-cols-[1fr_220px]">
               <SearchInput value={txSearch} onChange={(v) => { setTxSearch(v); setTxPage(1) }} placeholder="Cari kode transaksi PPAT atau klien…" />
-              <Select value={txStatus} onChange={(e) => { setTxStatus(e.target.value); setTxPage(1) }}>
+              <Select value={txStatus} onChange={(e) => { setTxStatus(e.target.value); setTxPage(1) }} aria-label="Saring status transaksi PPAT">
                 <option value="">Semua status</option>
                 {Object.entries(WORKFLOW_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>

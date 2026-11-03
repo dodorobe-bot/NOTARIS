@@ -173,7 +173,7 @@ export function Shell({
               )}
             </div>
           </div>
-          <p className="mt-1.5 text-center text-[8.5px] tracking-wide text-navy-400">v{appInfo?.version ?? '1.0.0'} · Database terenkripsi</p>
+          <p className="mt-1.5 text-center text-[8.5px] tracking-wide text-navy-400">v{appInfo?.version ?? '1.0.1'} · Database terenkripsi</p>
         </div>
       </aside>
 
@@ -291,7 +291,7 @@ export function Shell({
               </span>
             </div>
             <span className="rounded-md border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:border-navy-700 dark:text-slate-300">
-              Versi {appInfo?.version ?? '1.0.0'}
+              Versi {appInfo?.version ?? '1.0.1'}
             </span>
           </div>
         </footer>

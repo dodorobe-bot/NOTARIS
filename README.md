@@ -3,7 +3,7 @@
 Aplikasi desktop offline-first untuk administrasi **Kantor Notaris & PPAT** di Indonesia. Seluruh data tersimpan lokal di perangkat, database dienkripsi saat aplikasi ditutup, dan setiap perubahan penting tercatat pada audit log dengan rantai hash SHA-256.
 
 - Nama aplikasi: **NOTARIS PRO**
-- Versi: **1.0.0**
+- Versi: **1.0.1**
 - Platform utama: **Windows 10/11 x64**
 - Bahasa antarmuka: **Indonesia**
 - Mata uang: **Rupiah**, tanggal **DD-MM-YYYY**, zona waktu **Asia/Jakarta**
@@ -13,7 +13,7 @@ Aplikasi desktop offline-first untuk administrasi **Kantor Notaris & PPAT** di I
 | Pemeriksaan | Status |
 | --- | --- |
 | Typecheck main + renderer (`npm run typecheck`) | Lulus |
-| Unit test Vitest | 87 tes lulus (9 berkas) |
+| Unit test Vitest | 172 tes lulus (22 berkas) |
 | E2E Electron build dev (`npm run e2e`) | Lulus |
 | E2E aplikasi terpaket (`E2E_APP=...`) | Lulus |
 | Installer Windows NSIS x64 | Terbentuk dan diuji start |
@@ -70,7 +70,7 @@ npm run dist:win
 Hasil:
 
 ```
-release/NOTARIS-PRO-Setup-1.0.0-x64.exe
+release/NOTARIS-PRO-Setup-1.0.1-x64.exe
 release/win-unpacked/NOTARIS PRO.exe
 ```
 

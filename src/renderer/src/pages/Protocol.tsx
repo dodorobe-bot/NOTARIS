@@ -102,7 +102,7 @@ export function Protocol({ session }: { session: SessionInfo }) {
       <Card className="p-3">
         <div className="grid gap-2 md:grid-cols-[1fr_180px]">
           <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari nomor akta, lokasi, atau catatan…" />
-          <Select value={year} onChange={(e) => { setYear(e.target.value); setPage(1) }}>
+          <Select value={year} onChange={(e) => { setYear(e.target.value); setPage(1) }} aria-label="Saring tahun protokol">
             <option value="">Semua tahun</option>
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </Select>

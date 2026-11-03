@@ -131,15 +131,20 @@ export function Field({
   required?: boolean
   className?: string
 }) {
-  return (
-    <div className={className}>
+  const content = (
+    <>
       {label && (
-        <label className="field-label">
+        <span className="field-label">
           {label}
           {required && <span className="ml-1 text-red-500">*</span>}
-        </label>
+        </span>
       )}
       {children}
+    </>
+  )
+  return (
+    <div className={className}>
+      {label ? <label className="block">{content}</label> : content}
       {hint && !error && <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{hint}</p>}
       {error && <p className="mt-1 text-[11px] font-medium text-red-600 dark:text-red-400">{error}</p>}
     </div>
@@ -176,6 +181,7 @@ export function SearchInput({
         className="input pl-9"
         value={value}
         placeholder={placeholder}
+        aria-label={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
       {value && (

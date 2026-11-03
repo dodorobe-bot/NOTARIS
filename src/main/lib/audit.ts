@@ -49,14 +49,32 @@ export function computeAuditHash(row: Omit<AuditChainRow, 'id' | 'hash'>): strin
 }
 
 const CHAIN_CONFLICT = 'Rantai audit tidak berkesinambungan'
-const CHAIN_ATTEMPTS = 4
+const CHAIN_ATTEMPTS = 6
+const RETRY_BASE_MS = 20
 
 function isPrismaClient(tx: DbLike): tx is PrismaClient {
   return typeof (tx as { $connect?: unknown }).$connect === 'function'
 }
 
+/**
+ * Prisma membungkus `RAISE(ABORT)` dari trigger 007 sebagai P2003 (bukan pesan aslinya),
+ * jadi model juga harus diperiksa. AuditLog tidak memiliki relasi foreign key, sehingga
+ * P2003 pada model ini hanya dapat berasal dari trigger rantai.
+ */
 function isChainConflict(err: unknown): boolean {
-  return err instanceof Error && err.message.includes(CHAIN_CONFLICT)
+  if (!(err instanceof Error)) return false
+  if (err.message.includes(CHAIN_CONFLICT)) return true
+  const code = (err as { code?: string }).code
+  const modelName = (err as { meta?: { modelName?: string } }).meta?.modelName
+  return code === 'P2003' && modelName === 'AuditLog'
+}
+
+/** SQLite dapat melaporkan kunci tulis sementara saat ada koneksi lain; aman diulang. */
+function isTransientLock(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const code = (err as { code?: string }).code
+  const message = err.message.toLowerCase()
+  return code === 'P2034' || message.includes('database is locked') || message.includes('sqlite_busy')
 }
 
 async function appendRow(tx: DbLike, input: AuditInput): Promise<void> {
@@ -97,11 +115,11 @@ async function appendSerialized(tx: PrismaClient, input: AuditInput): Promise<vo
       await appendRow(tx, input)
       return
     } catch (err) {
-      if (!isChainConflict(err)) throw err
+      if (!isChainConflict(err) && !isTransientLock(err)) throw err
       if (attempt >= CHAIN_ATTEMPTS) {
         throw new ConflictError('Rantai audit sedang diperbarui oleh proses lain. Silakan ulangi tindakan ini.')
       }
-      await new Promise((resolve) => setTimeout(resolve, 5 * attempt))
+      await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_MS * attempt))
     }
   }
 }

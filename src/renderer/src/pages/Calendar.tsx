@@ -367,7 +367,7 @@ export function CalendarPage({ session }: { session: SessionInfo }) {
           <>
             <div className="grid gap-2 p-3 md:grid-cols-[1fr_200px]">
               <SearchInput value={taskSearch} onChange={(v) => { setTaskSearch(v); setTaskPage(1) }} placeholder="Cari judul tugas…" />
-              <Select value={taskStatus} onChange={(e) => { setTaskStatus(e.target.value); setTaskPage(1) }}>
+              <Select value={taskStatus} onChange={(e) => { setTaskStatus(e.target.value); setTaskPage(1) }} aria-label="Saring status tugas">
                 <option value="">Semua status</option>
                 {TASK_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </Select>
@@ -403,7 +403,7 @@ export function CalendarPage({ session }: { session: SessionInfo }) {
           <>
             <div className="grid gap-2 p-3 md:grid-cols-[1fr_200px]">
               <SearchInput value={dlSearch} onChange={(v) => { setDlSearch(v); setDlPage(1) }} placeholder="Cari tenggat…" />
-              <Select value={dlStatus} onChange={(e) => { setDlStatus(e.target.value); setDlPage(1) }}>
+              <Select value={dlStatus} onChange={(e) => { setDlStatus(e.target.value); setDlPage(1) }} aria-label="Saring status tenggat">
                 <option value="">Semua status</option>
                 {DEADLINE_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </Select>

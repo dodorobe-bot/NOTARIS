@@ -378,7 +378,7 @@ export function Finance({ session }: { session: SessionInfo }) {
           <>
             <div className="flex flex-wrap items-center gap-2 px-4 py-3">
               <SearchInput value={invSearch} onChange={(v) => { setInvSearch(v); setInvPage(1) }} placeholder="Cari nomor invoice, klien, catatan…" className="w-full sm:w-72" />
-              <Select value={invStatus} onChange={(e) => { setInvStatus(e.target.value); setInvPage(1) }} className="w-full sm:w-48">
+              <Select value={invStatus} onChange={(e) => { setInvStatus(e.target.value); setInvPage(1) }} className="w-full sm:w-48" aria-label="Saring status invoice">
                 <option value="">Semua status</option>
                 {INVOICE_STATUSES.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
               </Select>

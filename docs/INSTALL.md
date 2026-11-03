@@ -108,7 +108,18 @@ Sebelum distribusi, cocokkan checksum installer:
 Get-FileHash "release\NOTARIS-PRO-Setup-1.0.0-x64.exe" -Algorithm SHA256
 ```
 
-Simpan hasil checksum bersama arsip rilis. Aplikasi memakai build tanpa code signing certificate; ini tidak memengaruhi fungsi, tetapi Windows dapat menampilkan peringatan reputasi.
+Simpan hasil checksum bersama arsip rilis. Build yang ada saat ini **tidak ditandatangani** (`Get-AuthenticodeSignature` menghasilkan `NotSigned`) karena tidak ada code signing certificate pada mesin build; ini tidak memengaruhi fungsi, tetapi Windows dapat menampilkan peringatan reputasi.
+
+Bila sertifikat tersedia, electron-builder membaca `CSC_LINK` (path/Base64 berkas `.pfx`) dan `CSC_KEY_PASSWORD` dari environment. Jangan menaruh sertifikat atau kata sandinya di repositori:
+
+```powershell
+$env:CSC_LINK = "C:\kunci\notarispro-signing.pfx"
+$env:CSC_KEY_PASSWORD = "<kata-sandi-pfx>"
+npm run dist:win
+Get-AuthenticodeSignature "release\NOTARIS-PRO-Setup-1.0.0-x64.exe" | Format-List Status,SignerCertificate
+```
+
+Build baru boleh disebut "tertanda" hanya setelah perintah terakhir menampilkan `Status=Valid`.
 
 ## Linux dan macOS
 

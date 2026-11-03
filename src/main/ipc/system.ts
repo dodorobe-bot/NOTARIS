@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import path from 'node:path'
 import { app } from 'electron'
 import { db } from '../db'
 import { route } from './router'
@@ -19,12 +20,26 @@ import {
 } from '../lib/vault'
 import { log } from '../lib/logger'
 import { collectObjectSizes, collectPerformance } from '../lib/perf'
+import { AttemptGuard } from '../lib/attempt-guard'
 import { APP_NAME, APP_VERSION } from '../../shared/constants'
 
-const loginAttempts = new Map<string, { count: number; until: number }>()
-const unlockAttempts = new Map<string, { count: number; until: number }>()
-const UNLOCK_MAX_ATTEMPTS = 5
-const UNLOCK_LOCK_MS = 60_000
+let unlockGuardInstance: AttemptGuard | null = null
+let loginGuardInstance: AttemptGuard | null = null
+
+function unlockGuard(): AttemptGuard {
+  unlockGuardInstance ??= new AttemptGuard(path.join(dirs.config(), 'unlock-attempts.json'))
+  return unlockGuardInstance
+}
+
+function loginGuard(): AttemptGuard {
+  loginGuardInstance ??= new AttemptGuard(path.join(dirs.config(), 'login-attempts.json'))
+  return loginGuardInstance
+}
+
+/** Kunci memakai hash agar nama pengguna yang salah ketik tidak tersimpan di berkas status. */
+function loginAttemptKey(username: string): string {
+  return crypto.createHash('sha256').update(username.trim().toLowerCase()).digest('hex')
+}
 
 async function buildSession(userId: string) {
   const user = await db().user.findUnique({
@@ -169,25 +184,25 @@ route('vault.unlock', {
   schema: unlockSchema,
   handler: async (input) => {
     const attemptKey = input.useRecovery ? 'recovery' : 'master'
-    const now = Date.now()
-    const attempt = unlockAttempts.get(attemptKey)
-    if (attempt && attempt.until > now) {
-      const secs = Math.ceil((attempt.until - now) / 1000)
+    const guard = unlockGuard()
+    const blocked = guard.status(attemptKey)
+    if (blocked.locked) {
+      const secs = Math.ceil(blocked.retryAfterMs / 1000)
       throw new AppError(`Terlalu banyak percobaan membuka vault. Coba lagi dalam ${secs} detik.`, 'LOCKED_OUT')
     }
     try {
       await unlockVault(input.password, input.useRecovery)
-      unlockAttempts.delete(attemptKey)
+      guard.clear(attemptKey)
     } catch (err) {
       // Hanya kesalahan kunci yang dihitung; database rusak dengan kunci benar tidak boleh
       // membuat pengguna terkunci dari upaya pemulihan berikutnya.
       if (err instanceof Error && err.message.includes('Master password atau recovery code salah')) {
-        const count = (attempt?.count ?? 0) + 1
-        unlockAttempts.set(attemptKey, {
-          count,
-          until: count >= UNLOCK_MAX_ATTEMPTS ? now + UNLOCK_LOCK_MS : 0,
+        const failure = guard.registerFailure(attemptKey)
+        log.warn('Percobaan membuka vault gagal', {
+          attempt: failure.count,
+          mode: attemptKey,
+          lockedForMs: failure.retryAfterMs,
         })
-        log.warn('Percobaan membuka vault gagal', { attempt: count, mode: attemptKey })
       }
       throw err
     }
@@ -253,10 +268,11 @@ route('auth.login', {
     if (vs.status !== 'UNLOCKED' && vs.status !== 'DISABLED') {
       throw new AppError('Database masih terkunci. Buka dengan master password terlebih dahulu.', 'VAULT_LOCKED')
     }
-    const now = Date.now()
-    const attempt = loginAttempts.get(input.username.toLowerCase())
-    if (attempt && attempt.until > now) {
-      const secs = Math.ceil((attempt.until - now) / 1000)
+    const attemptKey = loginAttemptKey(input.username)
+    const guard = loginGuard()
+    const blocked = guard.status(attemptKey)
+    if (blocked.locked) {
+      const secs = Math.ceil(blocked.retryAfterMs / 1000)
       throw new AppError(`Terlalu banyak percobaan gagal. Coba lagi dalam ${secs} detik.`, 'LOCKED_OUT')
     }
 
@@ -267,12 +283,8 @@ route('auth.login', {
 
     const valid = user ? await verifyPassword(input.password, user.passwordHash) : false
     if (!user || !valid) {
-      const count = (attempt?.count ?? 0) + 1
       const maxAttempts = Number(await getSetting('security.maxLoginAttempts', '5')) || 5
-      loginAttempts.set(input.username.toLowerCase(), {
-        count,
-        until: count >= maxAttempts ? now + 60_000 : 0,
-      })
+      guard.registerFailure(attemptKey, maxAttempts)
       await audit(db(), {
         userId: user?.id ?? null,
         username: input.username,
@@ -284,7 +296,7 @@ route('auth.login', {
     }
     if (!user.isActive) throw new AppError('Akun dinonaktifkan. Hubungi administrator.', 'INACTIVE')
 
-    loginAttempts.delete(input.username.toLowerCase())
+    guard.clear(attemptKey)
     await db().user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
     await buildSession(user.id)
     await audit(db(), {

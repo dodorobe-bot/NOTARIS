@@ -207,11 +207,11 @@ export function Users({ session }: { session: SessionInfo }) {
           <>
             <div className="flex flex-wrap items-center gap-2 px-4 py-3">
               <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari nama, username, email…" className="w-full sm:w-72" />
-              <Select value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setPage(1) }} className="w-full sm:w-48">
+              <Select value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setPage(1) }} className="w-full sm:w-48" aria-label="Saring role">
                 <option value="">Semua role</option>
                 {(roles.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </Select>
-              <Select value={activeFilter} onChange={(e) => { setActiveFilter(e.target.value); setPage(1) }} className="w-full sm:w-40">
+              <Select value={activeFilter} onChange={(e) => { setActiveFilter(e.target.value); setPage(1) }} className="w-full sm:w-40" aria-label="Saring status akun">
                 <option value="">Semua status</option>
                 <option value="true">Aktif</option>
                 <option value="false">Nonaktif</option>

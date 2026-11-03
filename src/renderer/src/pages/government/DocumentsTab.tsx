@@ -53,11 +53,11 @@ export function DocumentsTab() {
     <div className="space-y-4">
       <Card className="flex flex-wrap items-center gap-2 p-3">
         <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari nama berkas, catatan, atau nomor pengajuan…" className="w-full sm:w-80" />
-        <Select value={agency} onChange={(e) => { setAgency(e.target.value); setPage(1) }} className="w-full sm:w-40">
+        <Select value={agency} onChange={(e) => { setAgency(e.target.value); setPage(1) }} className="w-full sm:w-40" aria-label="Saring instansi">
           <option value="">Semua instansi</option>
           {GOVERNMENT_AGENCIES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
         </Select>
-        <Select value={kind} onChange={(e) => { setKind(e.target.value); setPage(1) }} className="w-full sm:w-48">
+        <Select value={kind} onChange={(e) => { setKind(e.target.value); setPage(1) }} className="w-full sm:w-48" aria-label="Saring jenis dokumen">
           <option value="">Semua jenis berkas</option>
           {GOVERNMENT_FILE_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </Select>

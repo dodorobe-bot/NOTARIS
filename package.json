@@ -1,6 +1,6 @@
 {
   "name": "notaris-pro",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "NOTARIS PRO — Integrated Notary & PPAT Management System",
   "main": "./out/main/index.js",
   "author": "Kantor Notaris & PPAT",

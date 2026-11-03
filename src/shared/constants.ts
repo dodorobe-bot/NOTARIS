@@ -2,7 +2,7 @@
 
 export const APP_NAME = 'NOTARIS PRO'
 export const APP_SUBTITLE = 'Integrated Notary & PPAT Management System'
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = '1.0.1'
 
 export type RoleCode =
   | 'ADMINISTRATOR'

@@ -65,6 +65,13 @@ function writeGovFile(name) {
   return target
 }
 
+function assertExportedFile(exported, label, magic) {
+  if (!exported?.filePath || !fs.existsSync(exported.filePath)) fail(`${label}: berkas ekspor tidak ditemukan`)
+  const size = fs.statSync(exported.filePath).size
+  const head = fs.readFileSync(exported.filePath).subarray(0, magic.length).toString('latin1')
+  if (size < 1000 || head !== magic) fail(`${label}: berkas ekspor tidak sah (${size} byte, awalan "${head}")`)
+}
+
 /** Memanggil rute yang HARUS ditolak; mengembalikan pesan errornya. */
 async function expectRejection(routeName, payload, code, label) {
   const res = await callRaw(pageRef, routeName, payload)
@@ -514,8 +521,111 @@ async function uiWalk(page) {
   for (const [nav, heading] of pages) {
     await page.getByRole('link', { name: nav, exact: true }).click()
     await page.getByRole('heading', { name: heading, exact: true }).first().waitFor({ state: 'visible', timeout: 20_000 })
+    await checkPageQuality(page, nav)
   }
-  log('ui', `${pages.length} modul terbuka tanpa error render`)
+  log('ui', `${pages.length} modul terbuka tanpa error render, tanpa overflow, aksesibilitas dasar lolos`)
+}
+
+async function checkPageQuality(page, label) {
+  const issues = await page.evaluate(() => {
+    const found = []
+    const visible = (el) => {
+      const rect = el.getBoundingClientRect()
+      const style = getComputedStyle(el)
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+    }
+    const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}.${String(el.className || '').split(' ')[0]}`
+    const nameOf = (el) => (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim()
+
+    for (const el of document.querySelectorAll('button, a[href], [role="button"], [role="link"], [role="tab"]')) {
+      if (!visible(el)) continue
+      if (!nameOf(el)) found.push(`kontrol tanpa nama aksesibel: ${describe(el)}`)
+    }
+
+    for (const el of document.querySelectorAll('input:not([type="hidden"]), select, textarea')) {
+      if (!visible(el)) continue
+      if (el.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(el.type)) {
+        if (!(el.value || el.getAttribute('aria-label') || el.getAttribute('title'))) {
+          found.push(`tombol input tanpa nama: ${describe(el)}`)
+        }
+        continue
+      }
+      const labelledBy = el.getAttribute('aria-labelledby')
+      const hasLabel = (el.labels && el.labels.length > 0) ||
+        el.getAttribute('aria-label') ||
+        (labelledBy && labelledBy.split(/\s+/).every((id) => document.getElementById(id)))
+      if (!hasLabel) found.push(`isian tanpa label: ${describe(el)} (${el.type || el.tagName.toLowerCase()})`)
+    }
+
+    for (const img of document.querySelectorAll('img')) {
+      if (!img.hasAttribute('alt')) found.push(`gambar tanpa alt: ${describe(img)}`)
+    }
+
+    const root = document.documentElement
+    if (root.scrollWidth > root.clientWidth + 1) {
+      found.push(`overflow horizontal ${root.scrollWidth}px > ${root.clientWidth}px`)
+    }
+    return found.slice(0, 15)
+  })
+  if (issues.length > 0) fail(`Aksesibilitas/tata letak [${label}]: ${issues.join(' | ')}`)
+}
+
+async function layoutWalk(app, page) {
+  const routes = [
+    ['#/', /Selamat Datang/],
+    ['#/klien', /^Klien$/],
+    ['#/keuangan', /^Keuangan$/],
+    ['#/laporan', /^Laporan$/],
+    ['#/integrasi', /^Integrasi Pemerintah$/],
+  ]
+  const sizes = [
+    [1180, 720],
+    [1366, 768],
+    [1920, 1080],
+    [2560, 1440],
+  ]
+
+  const assertNoOverflow = async (context) => {
+    const width = await page.evaluate(() => ({
+      scroll: document.documentElement.scrollWidth,
+      client: document.documentElement.clientWidth,
+    }))
+    if (width.scroll > width.client + 1) {
+      fail(`Overflow horizontal ${context}: ${width.scroll}px > ${width.client}px`)
+    }
+  }
+
+  for (const [width, height] of sizes) {
+    await app.evaluate(({ BrowserWindow }, bounds) => {
+      BrowserWindow.getAllWindows()[0].setBounds({ x: 30, y: 30, ...bounds })
+    }, { width, height })
+    await page.waitForTimeout(250)
+    for (const [hash, heading] of routes) {
+      await page.evaluate((h) => { window.location.hash = h }, hash)
+      await page.getByRole('heading', { name: heading }).first().waitFor({ state: 'visible', timeout: 20_000 })
+      await assertNoOverflow(`${hash} pada ${width}x${height}`)
+    }
+  }
+
+  for (const zoom of [1.25, 1.5]) {
+    await app.evaluate(({ BrowserWindow }, factor) => {
+      BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(factor)
+    }, zoom)
+    await page.waitForTimeout(300)
+    for (const [hash, heading] of routes) {
+      await page.evaluate((h) => { window.location.hash = h }, hash)
+      await page.getByRole('heading', { name: heading }).first().waitFor({ state: 'visible', timeout: 20_000 })
+      await assertNoOverflow(`${hash} pada zoom ${zoom * 100}%`)
+    }
+  }
+
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    win.webContents.setZoomFactor(1)
+    win.setBounds({ x: 30, y: 30, width: 1440, height: 900 })
+  })
+  await page.waitForTimeout(250)
+  log('layout', `tanpa overflow horizontal pada ${sizes.length} ukuran jendela dan zoom 125/150%`)
 }
 
 async function main() {
@@ -768,6 +878,7 @@ async function main() {
 
     const invoicePdf = await api(page, 'invoices.exportPdf', { id: invoice.id })
     if (!invoicePdf.fileName.endsWith('.pdf')) fail('Ekspor PDF invoice gagal')
+    assertExportedFile(invoicePdf, 'PDF invoice', '%PDF-')
     const definitions = await api(page, 'reports.definitions')
     if (definitions.length !== 11) fail(`Jumlah definisi laporan ${definitions.length}, seharusnya 11`)
     const report = await api(page, 'reports.generate', { id: 'finance' })
@@ -775,7 +886,9 @@ async function main() {
     const reportPdf = await api(page, 'reports.exportPdf', { id: 'clients' })
     const reportXls = await api(page, 'reports.exportExcel', { id: 'clients' })
     if (!reportPdf.fileName.endsWith('.pdf') || !reportXls.fileName.endsWith('.xlsx')) fail('Ekspor laporan gagal')
-    log('laporan', `${definitions.length} laporan, PDF + Excel terbentuk`)
+    assertExportedFile(reportPdf, 'PDF laporan', '%PDF-')
+    assertExportedFile(reportXls, 'Excel laporan', 'PK')
+    log('laporan', `${definitions.length} laporan, PDF + Excel sah (magic bytes + ukuran)`)
 
     const gov = await runGovernment(client, trx)
 
@@ -939,6 +1052,9 @@ async function main() {
 
     const realErrors = errors.filter((e) => !/ResizeObserver|Download the React DevTools/i.test(e))
     if (realErrors.length > 0) fail(`Error renderer:\n${realErrors.slice(0, 10).join('\n')}`)
+
+    await layoutWalk(app, page)
+
     log('selesai', `data tersimpan di ${dataDir}`)
   } finally {
     await app.close().catch(() => undefined)

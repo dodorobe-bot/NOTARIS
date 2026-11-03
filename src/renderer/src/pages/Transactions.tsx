@@ -166,11 +166,11 @@ export function Transactions({ session }: { session: SessionInfo }) {
       <Card className="p-3">
         <div className="grid gap-2 md:grid-cols-[1fr_170px_200px]">
           <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1) }} placeholder="Cari kode, judul, atau nama klien…" />
-          <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1) }}>
+          <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1) }} aria-label="Saring jenis transaksi">
             <option value="">Semua jenis</option>
             {TRANSACTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </Select>
-          <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}>
+          <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} aria-label="Saring status transaksi">
             <option value="">Semua status</option>
             {WORKFLOW_STATUSES.map((s) => <option key={s} value={s}>{WORKFLOW_LABELS[s]}</option>)}
           </Select>
